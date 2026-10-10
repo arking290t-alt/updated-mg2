@@ -27,6 +27,7 @@ export const ExistingInventoryView: React.FC<ExistingInventoryViewProps> = ({
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [printFilter, setPrintFilter] = useState<'All' | 'Printed' | 'Non-Printed'>('All');
+  const [deleteConfirmItem, setDeleteConfirmItem] = useState<InventoryItem | null>(null);
 
   const filteredItems = inventory.filter((item) => {
     const matchesSearch =
@@ -218,7 +219,7 @@ export const ExistingInventoryView: React.FC<ExistingInventoryViewProps> = ({
                 </div>
 
                 <button
-                  onClick={() => onDeleteInventory(item.id)}
+                  onClick={() => setDeleteConfirmItem(item)}
                   title="Remove inventory record"
                   className="p-2 text-slate-500 hover:text-rose-400 hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
                 >
@@ -228,6 +229,47 @@ export const ExistingInventoryView: React.FC<ExistingInventoryViewProps> = ({
 
             </div>
           ))}
+        </div>
+      )}
+
+      {/* CONFIRMATION MODAL FOR DELETING INVENTORY */}
+      {deleteConfirmItem && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-150">
+          <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl relative space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-rose-500/20 text-rose-400 border border-rose-500/30 flex items-center justify-center shrink-0">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-white">Delete Inventory Record?</h3>
+                <p className="text-xs text-slate-400">This action cannot be undone</p>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-300">
+              Are you sure you want to permanently delete stock <strong>{deleteConfirmItem.stockType}</strong> ({deleteConfirmItem.quantity.toLocaleString()} units)?
+            </p>
+
+            <div className="flex items-center justify-end gap-3 pt-2 border-t border-slate-800">
+              <button
+                type="button"
+                onClick={() => setDeleteConfirmItem(null)}
+                className="px-4 py-2 text-xs font-medium text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-xl transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  onDeleteInventory(deleteConfirmItem.id);
+                  setDeleteConfirmItem(null);
+                }}
+                className="px-4 py-2 text-xs font-bold bg-rose-600 hover:bg-rose-500 text-white rounded-xl transition-colors cursor-pointer"
+              >
+                Delete Record
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

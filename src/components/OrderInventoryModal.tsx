@@ -87,6 +87,14 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
   // MULTIPLE STOCKS QUEUE FOR JOB
   const [stockQueue, setStockQueue] = useState<StockItemEntry[]>([]);
 
+  // Deletion confirmation state for all items (staged stock, saved stock types, suppliers, presses)
+  interface DeleteTarget {
+    category: 'stock_item' | 'stock_type' | 'supplier' | 'press';
+    idOrName: string;
+    label: string;
+  }
+  const [deleteConfirmTarget, setDeleteConfirmTarget] = useState<DeleteTarget | null>(null);
+
   // Filtered Stock Types
   const filteredStockTypes = useMemo(() => {
     if (!stockSearch.trim()) return availableStockTypes;
@@ -222,6 +230,31 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
     setStockQueue((prev) => prev.filter((i) => i.id !== entryId));
   };
 
+  // Central deletion confirmation handler
+  const handleConfirmDelete = () => {
+    if (!deleteConfirmTarget) return;
+
+    switch (deleteConfirmTarget.category) {
+      case 'stock_item':
+        handleRemoveQueueItem(deleteConfirmTarget.idOrName);
+        break;
+      case 'stock_type':
+        if (stockType === deleteConfirmTarget.idOrName) setStockType('');
+        onDeleteStockType?.(deleteConfirmTarget.idOrName);
+        break;
+      case 'supplier':
+        if (receivingFrom === deleteConfirmTarget.idOrName) setReceivingFrom('');
+        onDeleteSupplier?.(deleteConfirmTarget.idOrName);
+        break;
+      case 'press':
+        if (pressName === deleteConfirmTarget.idOrName) setPressName('');
+        onDeletePress?.(deleteConfirmTarget.idOrName);
+        break;
+    }
+
+    setDeleteConfirmTarget(null);
+  };
+
   // Submit all items in queue (or current item if queue is empty)
   const handleSubmitAll = (e: React.FormEvent) => {
     e.preventDefault();
@@ -345,7 +378,13 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
 
                     <button
                       type="button"
-                      onClick={() => handleRemoveQueueItem(item.id)}
+                      onClick={() =>
+                        setDeleteConfirmTarget({
+                          category: 'stock_item',
+                          idOrName: item.id,
+                          label: `${item.stockType} (${item.quantity.toLocaleString()} units)`,
+                        })
+                      }
                       className="p-1.5 text-slate-500 hover:text-rose-400 hover:bg-slate-800 rounded transition-colors cursor-pointer"
                       title="Remove this stock item"
                     >
@@ -471,8 +510,11 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
                             type="button"
                             onClick={(e) => {
                               e.stopPropagation();
-                              if (stockType === type) setStockType('');
-                              onDeleteStockType(type);
+                              setDeleteConfirmTarget({
+                                category: 'stock_type',
+                                idOrName: type,
+                                label: type,
+                              });
                             }}
                             className="p-1 text-slate-500 hover:text-rose-400 hover:bg-slate-700/50 rounded transition-colors opacity-70 group-hover:opacity-100 ml-2"
                             title={`Delete saved stock type "${type}"`}
@@ -619,8 +661,11 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
                             type="button"
                             onClick={(e) => {
                               e.stopPropagation();
-                              if (receivingFrom === supp) setReceivingFrom('');
-                              onDeleteSupplier(supp);
+                              setDeleteConfirmTarget({
+                                category: 'supplier',
+                                idOrName: supp,
+                                label: supp,
+                              });
                             }}
                             className="p-1 text-slate-500 hover:text-rose-400 hover:bg-slate-700/50 rounded transition-colors opacity-70 group-hover:opacity-100 ml-2"
                             title={`Delete saved supplier "${supp}"`}
@@ -798,8 +843,11 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
                                 type="button"
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  if (pressName === p) setPressName('');
-                                  onDeletePress(p);
+                                  setDeleteConfirmTarget({
+                                    category: 'press',
+                                    idOrName: p,
+                                    label: p,
+                                  });
                                 }}
                                 className="p-1 text-slate-500 hover:text-rose-400 hover:bg-slate-700/50 rounded transition-colors opacity-70 group-hover:opacity-100 ml-2"
                                 title={`Delete saved press "${p}"`}
@@ -901,6 +949,54 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
         </div>
 
       </div>
+
+      {/* CONFIRMATION MODAL FOR DELETING ANY ITEM */}
+      {deleteConfirmTarget && (
+        <div className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-150">
+          <div className="w-full max-w-sm bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-2xl space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 rounded-xl bg-rose-500/20 text-rose-400 border border-rose-500/30 flex items-center justify-center shrink-0">
+                <Trash2 className="w-4 h-4" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-white">
+                  {deleteConfirmTarget.category === 'stock_item' && 'Remove Stock Item?'}
+                  {deleteConfirmTarget.category === 'stock_type' && 'Delete Stock Type?'}
+                  {deleteConfirmTarget.category === 'supplier' && 'Delete Supplier?'}
+                  {deleteConfirmTarget.category === 'press' && 'Delete Press Machine?'}
+                </h3>
+                <p className="text-xs text-slate-400">
+                  {deleteConfirmTarget.category === 'stock_item' 
+                    ? 'Removes item from current order draft' 
+                    : 'Permanently removes from saved list'}
+                </p>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-300">
+              Are you sure you want to {deleteConfirmTarget.category === 'stock_item' ? 'remove' : 'delete'} <strong>"{deleteConfirmTarget.label}"</strong>?
+            </p>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-slate-800">
+              <button
+                type="button"
+                onClick={() => setDeleteConfirmTarget(null)}
+                className="px-3 py-1.5 text-xs font-medium text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-lg transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDelete}
+                className="px-3.5 py-1.5 text-xs font-bold bg-rose-600 hover:bg-rose-500 text-white rounded-lg transition-colors cursor-pointer"
+              >
+                {deleteConfirmTarget.category === 'stock_item' ? 'Remove Item' : 'Delete'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 };

@@ -30,6 +30,7 @@ export const NewJobModal: React.FC<NewJobModalProps> = ({
   const [newTypeInput, setNewTypeInput] = useState('');
   const [isAddingCustomType, setIsAddingCustomType] = useState(availableTypes.length === 0);
   const [errorMessage, setErrorMessage] = useState('');
+  const [deleteConfirmType, setDeleteConfirmType] = useState<string | null>(null);
 
   // Filter types based on search
   const filteredTypes = useMemo(() => {
@@ -256,8 +257,7 @@ export const NewJobModal: React.FC<NewJobModalProps> = ({
                             type="button"
                             onClick={(e) => {
                               e.stopPropagation();
-                              if (selectedType === type) setSelectedType('');
-                              onDeleteType(type);
+                              setDeleteConfirmType(type);
                             }}
                             className="p-1 text-slate-500 hover:text-rose-400 hover:bg-slate-700/50 rounded transition-colors opacity-70 group-hover:opacity-100 ml-2"
                             title={`Delete saved type "${type}"`}
@@ -374,6 +374,51 @@ export const NewJobModal: React.FC<NewJobModalProps> = ({
         </form>
 
       </div>
+
+      {/* CONFIRMATION MODAL FOR DELETING JOB TYPE */}
+      {deleteConfirmType && (
+        <div className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-150">
+          <div className="w-full max-w-sm bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-2xl space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 rounded-xl bg-rose-500/20 text-rose-400 border border-rose-500/30 flex items-center justify-center shrink-0">
+                <Trash2 className="w-4 h-4" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-white">Delete Job Type?</h3>
+                <p className="text-xs text-slate-400">Permanently removes from saved list</p>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-300">
+              Are you sure you want to delete <strong>"{deleteConfirmType}"</strong>?
+            </p>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-slate-800">
+              <button
+                type="button"
+                onClick={() => setDeleteConfirmType(null)}
+                className="px-3 py-1.5 text-xs font-medium text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-lg transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (onDeleteType && deleteConfirmType) {
+                    if (selectedType === deleteConfirmType) setSelectedType('');
+                    onDeleteType(deleteConfirmType);
+                  }
+                  setDeleteConfirmType(null);
+                }}
+                className="px-3.5 py-1.5 text-xs font-bold bg-rose-600 hover:bg-rose-500 text-white rounded-lg transition-colors cursor-pointer"
+              >
+                Delete Job Type
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 };

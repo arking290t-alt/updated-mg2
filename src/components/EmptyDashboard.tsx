@@ -45,8 +45,10 @@ import {
   subscribeToFactorySettings,
   addCustomOptionToFirestore,
   deleteCustomOptionFromFirestore,
-  seedInitialDataIfEmpty,
-  testFirestoreConnection
+  testFirestoreConnection,
+  getPersistedJobs,
+  getPersistedInventory,
+  getPersistedSettings
 } from '../firebase/db';
 
 interface EmptyDashboardProps {
@@ -74,29 +76,20 @@ export const EmptyDashboard: React.FC<EmptyDashboardProps> = ({ onLogout }) => {
   const [syncStatus, setSyncStatus] = useState<string>('Live Connected');
   const [syncError, setSyncError] = useState<string | null>(null);
 
-  // Job Types (Synced from Firestore)
-  const [jobTypes, setJobTypes] = useState<string[]>(INITIAL_JOB_TYPES);
+  // Dropdown Settings (Initialized from localStorage so they never reset to default on refresh)
+  const [jobTypes, setJobTypes] = useState<string[]>(() => getPersistedSettings().jobTypes);
+  const [stockTypes, setStockTypes] = useState<string[]>(() => getPersistedSettings().stockTypes);
+  const [suppliers, setSuppliers] = useState<string[]>(() => getPersistedSettings().suppliers);
+  const [presses, setPresses] = useState<string[]>(() => getPersistedSettings().presses);
 
-  // Stock Types (Synced from Firestore)
-  const [stockTypes, setStockTypes] = useState<string[]>(INITIAL_STOCK_TYPES);
+  // Jobs List (Initialized from localStorage so deletions remain deleted and additions persist on refresh)
+  const [jobs, setJobs] = useState<CorrugationJob[]>(() => getPersistedJobs());
 
-  // Suppliers / Receiving From (Synced from Firestore)
-  const [suppliers, setSuppliers] = useState<string[]>(COMMON_SUPPLIERS);
-
-  // Presses (Synced from Firestore)
-  const [presses, setPresses] = useState<string[]>(INITIAL_PRESS_NAMES);
-
-  // Jobs List (Real-time Firestore stream)
-  const [jobs, setJobs] = useState<CorrugationJob[]>([]);
-
-  // Inventory Items List (Real-time Firestore stream)
-  const [inventory, setInventory] = useState<InventoryItem[]>([]);
+  // Inventory Items List (Initialized from localStorage so deletions remain deleted and additions persist on refresh)
+  const [inventory, setInventory] = useState<InventoryItem[]>(() => getPersistedInventory());
 
   // 1. Initial Firestore Setup & Real-time Subscriptions
   useEffect(() => {
-    // Run initial seed if database is empty
-    seedInitialDataIfEmpty().catch(console.error);
-
     // Test connection
     testFirestoreConnection().then((connected) => {
       setIsFirestoreConnected(connected);
@@ -105,7 +98,7 @@ export const EmptyDashboard: React.FC<EmptyDashboardProps> = ({ onLogout }) => {
       }
     });
 
-    // Subscribe to Jobs collection in Firestore
+    // Subscribe to Jobs collection in Firestore (with local persistence & tombstone protection)
     const unsubJobs = subscribeToJobs(
       (realtimeJobs) => {
         setJobs(realtimeJobs);
@@ -113,11 +106,10 @@ export const EmptyDashboard: React.FC<EmptyDashboardProps> = ({ onLogout }) => {
       },
       (error) => {
         console.warn('Jobs Firestore listener warning:', error);
-        setSyncError('Live sync encountering network/permission limits. Using local cache.');
       }
     );
 
-    // Subscribe to Inventory collection in Firestore
+    // Subscribe to Inventory collection in Firestore (with local persistence & tombstone protection)
     const unsubInventory = subscribeToInventory(
       (realtimeInventory) => {
         setInventory(realtimeInventory);
@@ -128,7 +120,7 @@ export const EmptyDashboard: React.FC<EmptyDashboardProps> = ({ onLogout }) => {
       }
     );
 
-    // Subscribe to Factory dropdown settings in Firestore
+    // Subscribe to Factory dropdown settings in Firestore (with local persistence protection)
     const unsubSettings = subscribeToFactorySettings(
       (settings) => {
         setJobTypes(settings.jobTypes);
@@ -329,6 +321,8 @@ export const EmptyDashboard: React.FC<EmptyDashboardProps> = ({ onLogout }) => {
     setJobs((prev) => prev.filter((j) => j.id !== jobId));
     try {
       await deleteJobFromFirestore(jobId);
+      setSyncStatus('Job permanently deleted');
+      setTimeout(() => setSyncStatus('Live Connected (mg-manager-3ab66)'), 2500);
     } catch (err) {
       console.error(err);
     }
@@ -338,6 +332,8 @@ export const EmptyDashboard: React.FC<EmptyDashboardProps> = ({ onLogout }) => {
     setInventory((prev) => prev.filter((i) => i.id !== itemId));
     try {
       await deleteInventoryItemFromFirestore(itemId);
+      setSyncStatus('Inventory permanently deleted');
+      setTimeout(() => setSyncStatus('Live Connected (mg-manager-3ab66)'), 2500);
     } catch (err) {
       console.error(err);
     }
