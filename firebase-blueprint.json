@@ -1,0 +1,157 @@
+{
+  "entities": {
+    "CorrugationJob": {
+      "title": "CorrugationJob",
+      "description": "A production work order for corrugation plant manufacturing or converting.",
+      "type": "object",
+      "properties": {
+        "jobName": {
+          "type": "string",
+          "description": "Name or title of the manufacturing job",
+          "maxLength": 200
+        },
+        "jobType": {
+          "type": "string",
+          "description": "Type of corrugation process or converting line",
+          "maxLength": 100
+        },
+        "jobPlacement": {
+          "type": "string",
+          "enum": ["Factory", "Office"],
+          "description": "Operational routing for this job"
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Timestamp string when job was created"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["Pending", "Not Completed", "Completed"],
+          "description": "Execution status of the job"
+        },
+        "notes": {
+          "type": "string",
+          "description": "Operational notes or flute specifications",
+          "maxLength": 1000
+        },
+        "hasInventory": {
+          "type": "boolean",
+          "description": "Whether raw stock has been ordered/attached"
+        },
+        "inventoryCount": {
+          "type": "number",
+          "description": "Number of inventory lots assigned"
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "Last updated timestamp"
+        }
+      },
+      "required": ["jobName", "jobType", "jobPlacement", "status", "createdAt"]
+    },
+    "InventoryItem": {
+      "title": "InventoryItem",
+      "description": "A raw paper reel stock or printed paperboard inventory record.",
+      "type": "object",
+      "properties": {
+        "stockType": {
+          "type": "string",
+          "description": "Kraft liner, fluting medium, or paperboard grade",
+          "maxLength": 150
+        },
+        "jobSize": {
+          "type": "string",
+          "description": "Deckle, sheet dimensions, or cutoff size",
+          "maxLength": 100
+        },
+        "receivingFrom": {
+          "type": "string",
+          "description": "Paper mill, logistics supplier, or internal bay",
+          "maxLength": 150
+        },
+        "isPrinted": {
+          "type": "boolean",
+          "description": "Whether stock underwent printing"
+        },
+        "pressName": {
+          "type": "string",
+          "description": "Flexo or rotary printing press used if printed",
+          "maxLength": 150
+        },
+        "quantity": {
+          "type": "number",
+          "description": "Quantity in pieces or linear units"
+        },
+        "jobId": {
+          "type": "string",
+          "description": "Associated job identifier if linked",
+          "maxLength": 100
+        },
+        "jobName": {
+          "type": "string",
+          "description": "Associated job name for quick reference",
+          "maxLength": 200
+        },
+        "orderedAt": {
+          "type": "string",
+          "description": "Order placement timestamp"
+        },
+        "status": {
+          "type": "string",
+          "description": "Receipt status (Received / In Transit)"
+        },
+        "notes": {
+          "type": "string",
+          "maxLength": 1000
+        }
+      },
+      "required": ["stockType", "quantity", "orderedAt"]
+    },
+    "FactorySettings": {
+      "title": "FactorySettings",
+      "description": "Configurable dropdown lists for corrugator operators.",
+      "type": "object",
+      "properties": {
+        "jobTypes": {
+          "type": "array",
+          "description": "List of available job types"
+        },
+        "stockTypes": {
+          "type": "array",
+          "description": "List of paperboard stock types"
+        },
+        "suppliers": {
+          "type": "array",
+          "description": "List of paper mills and receiving vendors"
+        },
+        "presses": {
+          "type": "array",
+          "description": "List of printing presses"
+        },
+        "updatedAt": {
+          "type": "string"
+        }
+      }
+    }
+  },
+  "firestore": {
+    "/jobs/{jobId}": {
+      "schema": {
+        "$ref": "#/entities/CorrugationJob"
+      },
+      "description": "Corrugation plant production jobs"
+    },
+    "/inventory/{inventoryId}": {
+      "schema": {
+        "$ref": "#/entities/InventoryItem"
+      },
+      "description": "Paper reels and material inventory orders"
+    },
+    "/settings/{settingId}": {
+      "schema": {
+        "$ref": "#/entities/FactorySettings"
+      },
+      "description": "Factory operational dropdown configuration"
+    }
+  }
+}

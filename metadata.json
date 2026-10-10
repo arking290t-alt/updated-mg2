@@ -1,0 +1,6 @@
+{
+  "name": "Corrugation Factory Operations & Gemini Assistant",
+  "description": "Corrugation plant login console with clean dashboard and integrated Gemini AI chatbot for corrugated packaging, fluting, paper grades, and machine operations.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

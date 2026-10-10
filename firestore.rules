@@ -1,0 +1,41 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Helper functions
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+    
+    // Default safety deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Factory Production Jobs
+    match /jobs/{jobId} {
+      allow read: if true;
+      allow create, update: if isValidId(jobId) 
+        && request.resource.data.jobName is string 
+        && request.resource.data.jobName.size() <= 200
+        && request.resource.data.status in ['Pending', 'Not Completed', 'Completed'];
+      allow delete: if isValidId(jobId);
+    }
+
+    // Paper Reel & Converting Inventory Lots
+    match /inventory/{inventoryId} {
+      allow read: if true;
+      allow create, update: if isValidId(inventoryId)
+        && request.resource.data.stockType is string
+        && request.resource.data.stockType.size() <= 150
+        && request.resource.data.quantity is number;
+      allow delete: if isValidId(inventoryId);
+    }
+
+    // Factory Config & Dropdowns (Job Types, Stock Types, Presses, Suppliers)
+    match /settings/{settingId} {
+      allow read: if true;
+      allow write: if isValidId(settingId);
+    }
+  }
+}
