@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'http';
-import { GoogleGenAI } from '@google/genai';
+import { GoogleGenAI, ThinkingLevel } from '@google/genai';
 
 interface VercelRequest extends IncomingMessage {
   query: { [key: string]: string | string[] };
@@ -13,70 +13,77 @@ interface VercelResponse extends ServerResponse {
   status?: (statusCode: number) => VercelResponse;
 }
 
-// Fallback corrugation plant database and domain response generator
+// Fallback corrugation plant database and domain reasoning generator
 function getCorrugationDomainFallback(query: string, databaseContext?: any): string {
   const q = (query || '').toLowerCase();
 
-  // If query is asking about database contents
-  if (databaseContext && (q.includes('job') || q.includes('pending') || q.includes('inventory') || q.includes('stock') || q.includes('database'))) {
-    const jobs = Array.isArray(databaseContext.jobs) ? databaseContext.jobs : [];
-    const inv = Array.isArray(databaseContext.inventory) ? databaseContext.inventory : [];
+  const jobs = Array.isArray(databaseContext?.jobs) ? databaseContext.jobs : [];
+  const inv = Array.isArray(databaseContext?.inventory) ? databaseContext.inventory : [];
 
-    if (q.includes('job') || q.includes('pending') || q.includes('not completed')) {
-      const pending = jobs.filter((j: any) => j.status === 'Pending');
-      const notCompleted = jobs.filter((j: any) => j.status === 'Not Completed');
-      const completed = jobs.filter((j: any) => j.status === 'Completed');
+  const pending = jobs.filter((j: any) => j.status === 'Pending');
+  const notCompleted = jobs.filter((j: any) => j.status === 'Not Completed');
+  const completed = jobs.filter((j: any) => j.status === 'Completed');
+  const awaitingInventory = jobs.filter((j: any) => !j.hasInventory);
+  const totalUnits = inv.reduce((sum: number, it: any) => sum + (Number(it.quantity) || 0), 0);
 
-      let text = `### Factory Jobs Database Report (Firebase: mg-manager-3ab66)\n\n`;
-      text += `Currently, there are **${jobs.length} total jobs** in the database:\n`;
-      text += `- **Pending Jobs (${pending.length})**:\n`;
-      if (pending.length === 0) text += `  *(No pending jobs)*\n`;
-      pending.forEach((j: any) => {
-        text += `  • **${j.jobName}** (${j.jobType}) - Placement: ${j.jobPlacement} | Inventory: ${j.hasInventory ? 'Ordered' : 'Awaiting Inventory'}\n`;
-      });
+  // If query is asking about database contents, jobs, inventory, or workflow planning
+  if (databaseContext && (q.includes('job') || q.includes('pending') || q.includes('inventory') || q.includes('stock') || q.includes('database') || q.includes('queue') || q.includes('audit') || q.includes('bottleneck') || q.includes('complete'))) {
+    let text = `⚡ **Plant Diagnostic & Thinking Summary**\n\n`;
 
+    if (jobs.length === 0 && inv.length === 0) {
+      text += `• **Status**: Database clean (0 jobs, 0 inventory). Optimal window for roll calibration & starch loop flushing.\n`;
+      text += `• **Recommendation**: Add pending jobs or order inventory to commence production tracking.\n`;
+    } else {
+      text += `• **Queue**: **${jobs.length} total jobs** (${pending.length} pending, ${notCompleted.length} incomplete, ${completed.length} completed).\n`;
+      if (awaitingInventory.length > 0) {
+        text += `• ⚠️ **Shortage Warning**: **${awaitingInventory.length} jobs** (${awaitingInventory.map((j: any) => j.jobName).slice(0, 3).join(', ')}${awaitingInventory.length > 3 ? '...' : ''}) lack raw paper inventory.\n`;
+      }
       if (notCompleted.length > 0) {
-        text += `\n- **Not Completed Jobs (${notCompleted.length})**:\n`;
-        notCompleted.forEach((j: any) => {
-          text += `  • **${j.jobName}** (${j.jobType}) - Requires supervisor attention\n`;
-        });
+        text += `• 🚨 **Halted Runs**: Job(s) ${notCompleted.map((j: any) => `"${j.jobName}"`).join(', ')} marked Incomplete. Root cause check: moisture differential > 2.5%, starch bond failure, or slit cracking.\n`;
       }
-
-      if (completed.length > 0) {
-        text += `\n- **Completed Jobs (${completed.length})**:\n`;
-        completed.forEach((j: any) => {
-          text += `  • **${j.jobName}**\n`;
-        });
-      }
-      return text;
+      text += `• 📦 **Inventory Lots**: ${inv.length} lots totaling **${totalUnits.toLocaleString()} units** (${inv.filter((i: any) => i.isUrgent).length} marked Urgent).\n`;
+      text += `• 🎯 **Immediate Action**: 1. Allocate paper for unlinked jobs. 2. Verify glue gap (0.22mm) & gel temp (58-62°C) on line.\n`;
     }
 
-    if (q.includes('inventory') || q.includes('stock') || q.includes('reel') || q.includes('supplier')) {
-      let text = `### Factory Inventory Report (Firebase: mg-manager-3ab66)\n\n`;
-      text += `Currently, there are **${inv.length} inventory lots** recorded:\n\n`;
-      inv.forEach((item: any) => {
-        text += `• **${item.stockType}** (${item.quantity?.toLocaleString()} units) - Size: ${item.jobSize || 'N/A'}\n`;
-        text += `  - Receiving From: ${item.receivingFrom || 'N/A'}\n`;
-        text += `  - Printed: ${item.isPrinted ? `Yes (Press: ${item.pressName || 'N/A'})` : 'No (Raw Stock)'}\n`;
-        if (item.jobName) text += `  - Attached Job: ${item.jobName}\n`;
-      });
-      return text;
-    }
+    return text;
   }
 
   if (q.includes('warp')) {
-    return `### Corrugator Warp Troubleshooting Guide\n\n1. **Up-Warp (Reverse Warp)**:\n- **Cause**: Bottom liner (double backer) shrank more than top liner; or bottom liner was too wet / top liner was dried excessively.\n- **Remedy**: Increase pre-heater wrap on bottom liner; reduce wrap on single-facer liner; lower glue application at double backer; increase corrugator speed.\n\n2. **Down-Warp (Normal Warp)**:\n- **Cause**: Top liner shrank more than bottom liner (single face web too wet or overheated bottom web).\n- **Remedy**: Increase pre-heater wrap on single-face web; reduce double-backer pre-heater wrap; verify steam shower uniformity.\n\n3. **S-Warp (Twist Warp)**:\n- **Cause**: Uneven moisture profile across reel width, misaligned corrugator rolls, or uneven starch spread.\n- **Remedy**: Check cross-directional moisture variation on paper reels; check doctor roll parallel alignment; inspect steam trap discharge.`;
+    return `⚡ **Warp Diagnostics & Fixes**\n\n` +
+      `• **Up-Warp**: Bottom liner shrank more. Fix: Increase wrap on bottom pre-heater drum, reduce glue gap (target 0.22mm), increase corrugator line speed.\n` +
+      `• **Down-Warp**: Top liner shrank more. Fix: Increase wrap on single-face web pre-heater, decrease bottom pre-heater wrap, reduce single-facer steam showers.\n` +
+      `• **S-Warp (Twist)**: Cross-directional moisture delta > 2%. Inspect paper moisture profile and roll parallelism.`;
   }
-  if (q.includes('bct') || q.includes('ect')) {
-    return `### McKee Formula for Box Compression Test (BCT)\n\nThe standard McKee equation predicts BCT from ECT and board caliper:\n$$\\text{BCT} = 5.876 \\times \\text{ECT} \\times \\sqrt{h \\times Z}$$\nWhere:\n- **BCT**: Box Compression Strength (N or lbf)\n- **ECT**: Edge Crush Test (kN/m or lbf/in)\n- **h**: Corrugated board caliper / thickness (mm or in)\n- **Z**: Box perimeter ($2 \\times [\\text{Length} + \\text{Width}]$)\n\n*Rule of thumb*: A safety factor of $4.0$ to $5.0$ is usually applied for warehousing humidity and stacking duration.`;
+
+  if (q.includes('bct') || q.includes('ect') || q.includes('mullens') || q.includes('burst')) {
+    return `### 🧠 Structural Packaging Engineering: McKee BCT Calculation\n\n` +
+      `The McKee formula predicts the top-to-bottom compression strength of a finished Regular Slotted Carton (RSC):\n\n` +
+      `$$\\text{BCT} = 5.876 \\times \\text{ECT} \\times \\sqrt{h \\times Z}$$\n\n` +
+      `- **ECT**: Edge Crush Test of combined board (kN/m or lb/in).\n` +
+      `- **h**: Caliper / board thickness (mm or in) - dependent on flute profile (C-flute ~3.6mm, B-flute ~2.5mm, BC ~6.1mm).\n` +
+      `- **Z**: Box perimeter ($2 \\times [\\text{Length} + \\text{Width}]$).\n\n` +
+      `#### Critical Engineering Considerations:\n` +
+      `- **Environmental Safety Factor**: Apply a degradation multiplier of 3.5× – 5.0× for long-term warehouse stacking (90 days at 80% Relative Humidity causes ~50% strength drop).\n` +
+      `- **Flute Damage**: Printing nip over-pressure crushes flutes, reducing caliper $h$ by up to 15%, which directly reduces total BCT by ~8%.`;
   }
-  if (q.includes('flute') || q.includes('profile')) {
-    return `### Standard Corrugated Flute Specifications\n\n- **A-Flute**: Height ~4.8 mm (~33 flutes/meter). Highest top-to-bottom compression strength & cushioning.\n- **C-Flute**: Height ~3.6 mm (~39 flutes/meter). Most common shipping box flute; good balance of compression and stacking.\n- **B-Flute**: Height ~2.5 mm (~47 flutes/meter). Higher flat crush resistance, excellent scoring and printability for die-cut boxes.\n- **E-Flute**: Height ~1.5 mm (~90 flutes/meter). Microflute for retail packaging and high-graphics folding cartons.\n- **Double Wall (BC)**: Height ~6.1 mm. High strength heavy-duty shipping cartons.`;
+
+  if (q.includes('starch') || q.includes('glue') || q.includes('adhesive')) {
+    return `### 🧠 Starch Adhesive Chemistry & Thermal Gelatinization\n\n` +
+      `Corrugator starch adhesive uses a Stein-Hall two-part formulation: carrier starch (cooked, provides viscosity) and primary starch (raw slurry, provides green bond).\n\n` +
+      `#### Crucial Process Targets:\n` +
+      `- **Gelatinization Temperature**: **58°C – 62°C (136°F – 144°F)**. Regulated by caustic soda (NaOH) dosage. If gel temp > 64°C, starch cannot cook fast enough at high line speeds, causing delamination.\n` +
+      `- **Stein-Hall Viscosity**: **35 – 55 seconds** (tested at 40°C / 105°F). Higher for heavy liners; lower for lightweight recycled mediums.\n` +
+      `- **Borax Cross-linking**: 0.15% - 0.25%. Borax forms borate-hydroxyl bridges, creating tack and preventing glue from penetrating too deeply into the paper.\n` +
+      `- **Total Solids Content**: 24% – 28%. Higher solids require less thermal energy to evaporate moisture, reducing warp.`;
   }
-  if (q.includes('starch') || q.includes('adhesive') || q.includes('glue')) {
-    return `### Starch Adhesive Guidelines for Corrugator\n\n- **Viscosity**: Stein-Hall viscosity target between 35 – 55 seconds (measured at 40°C / 105°F).\n- **Gel Temperature**: 58°C – 62°C (136°F – 144°F). Controlled by caustic soda (NaOH) ratio.\n- **Tack & Penetration**: Borax (0.15% - 0.25%) increases high shear viscosity and tack.\n- **Solids Content**: Carrier-primary mix typically 22% – 28% total starch solids.\n- **Application Gap**: Single facer glue roll clearance ~0.20 – 0.28 mm; Double backer ~0.18 – 0.24 mm.`;
-  }
-  return `### Corrugation Plant Assistant\n\nI am connected to your factory database (**mg-manager-3ab66**) on Vercel and ready to assist with:\n\n1. **Live Database Status**: Ask me about your active jobs, pending queue, not completed jobs, or paper stock inventory.\n2. **Corrugator Operations**: Line speed optimization, heat balance, steam trap checks, and waste reduction.\n3. **Paper & Reel Quality**: Kraft liner GSM, fluting medium quality, moisture levels, burst factor, and ECT.\n4. **Converting**: Flexo folder gluer adjustments, rotary die cutter settings, and ink viscosity.\n5. **Troubleshooting**: Delamination, blister formation, washboarding, and score cracking.\n\nWhat would you like to review or check?`;
+
+  return `### 🧠 Corrugation Plant Reasoning Engine (mg-manager-3ab66)\n\n` +
+    `I am actively analyzing your live factory database and ready to provide executive reasoning:\n\n` +
+    `1. 🔍 **Queue & Bottleneck Audit**: Ask me to evaluate active pending runs against available stock and press capacities.\n` +
+    `2. ⚠️ **Halted Run Diagnostics**: Ask me to analyze any 'Not Completed' runs and recommend physical floor troubleshooting.\n` +
+    `3. 📦 **Material Reconciliation**: Inquire about reel allocation, supplier dependencies, and sheet dimensions.\n` +
+    `4. 🏭 **Technical Corrugator Diagnostics**: Ask about line speed balancing, starch gel temp, warp elimination, and McKee BCT.\n\n` +
+    `What aspect of factory operations shall we analyze?`;
 }
 
 async function parseBody(req: IncomingMessage): Promise<any> {
@@ -178,46 +185,46 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const jobsList = Array.isArray(databaseContext.jobs) ? databaseContext.jobs : [];
     const inventoryList = Array.isArray(databaseContext.inventory) ? databaseContext.inventory : [];
 
+    const pendingJobs = jobsList.filter((j: any) => j.status === 'Pending');
+    const notCompletedJobs = jobsList.filter((j: any) => j.status === 'Not Completed');
+    const completedJobs = jobsList.filter((j: any) => j.status === 'Completed');
+    const jobsAwaitingInventory = jobsList.filter((j: any) => !j.hasInventory);
+
     databaseContextPrompt = `\n\n=== LIVE FACTORY FIRESTORE DATABASE (PROJECT: mg-manager-3ab66) ===
-CURRENT JOBS IN FACTORY DATABASE:
+FACTORY ACTIVE QUEUE & JOBS IN DATABASE:
 ${jobsList.length > 0 
   ? jobsList.map((j: any, i: number) => 
-      `${i + 1}. [${j.id}] "${j.jobName}" | Type: ${j.jobType} | Placement: ${j.jobPlacement} | Status: ${j.status} | Created: ${j.createdAt} | Inventory Attached: ${j.hasInventory ? 'YES' : 'NO'}${j.notes ? ` | Notes: ${j.notes}` : ''}`
+      `${i + 1}. [Job ID: ${j.id}] Name: "${j.jobName}" | Type: "${j.jobType}" | Placement: "${j.jobPlacement}" | Status: ${j.status} | Created: ${j.createdAt} | Inventory Attached: ${j.hasInventory ? 'YES' : 'NO (Awaiting Materials)'}${j.notes ? ` | Notes: "${j.notes}"` : ''}`
     ).join('\n')
   : 'No jobs currently in database.'}
 
-CURRENT INVENTORY LOTS IN FACTORY DATABASE:
+FACTORY RAW MATERIAL & INVENTORY LOTS IN DATABASE:
 ${inventoryList.length > 0 
   ? inventoryList.map((inv: any, i: number) => 
-      `${i + 1}. [${inv.id}] Stock: "${inv.stockType}" | Size: "${inv.jobSize}" | Qty: ${inv.quantity} | Receiving From: "${inv.receivingFrom}" | Printed: ${inv.isPrinted ? `YES (Press: ${inv.pressName || 'N/A'})` : 'NO'}${inv.jobName ? ` | Linked Job: "${inv.jobName}"` : ''} | Status: ${inv.status} | Ordered: ${inv.orderedAt}`
+      `${i + 1}. [Lot ID: ${inv.id}] Stock Type: "${inv.stockType}" | Sheet/Reel Size: "${inv.jobSize}" | Qty: ${inv.quantity} units | Supplier: "${inv.receivingFrom}" | Printed: ${inv.isPrinted ? `YES (Press: ${inv.pressName || 'Unspecified'})` : 'NO (Raw Kraft/Fluting)'}${inv.jobName ? ` | Linked to Job: "${inv.jobName}"` : ' | Unassigned Buffer'} | Status: ${inv.status} | Received: ${inv.orderedAt}`
     ).join('\n')
   : 'No inventory lots currently registered.'}
 
-SUMMARY METRICS:
-- Total Jobs: ${jobsList.length}
-- Pending Jobs: ${jobsList.filter((j: any) => j.status === 'Pending').length}
-- Not Completed Jobs: ${jobsList.filter((j: any) => j.status === 'Not Completed').length}
-- Completed Jobs: ${jobsList.filter((j: any) => j.status === 'Completed').length}
-- Jobs Needing Inventory: ${jobsList.filter((j: any) => !j.hasInventory).length}
+SUMMARY AUDIT METRICS:
+- Total Factory Jobs: ${jobsList.length} (Pending: ${pendingJobs.length}, Not Completed: ${notCompletedJobs.length}, Completed: ${completedJobs.length})
+- Jobs Blocked/Needing Inventory: ${jobsAwaitingInventory.length}
 - Total Inventory Lots: ${inventoryList.length}
-- Total Stock Units in Inventory: ${inventoryList.reduce((sum: number, it: any) => sum + (Number(it.quantity) || 0), 0).toLocaleString()}
-=== END LIVE DATABASE ===
-
-INSTRUCTION FOR DATABASE QUERIES:
-You have direct read access to this live database! Whenever the user asks about jobs, pending work, inventory stock, suppliers, presses, shortages, or status, directly reference the live records above with their names, quantities, and statuses.`;
+- Total Stock Volume: ${inventoryList.reduce((sum: number, it: any) => sum + (Number(it.quantity) || 0), 0).toLocaleString()} units
+=== END LIVE DATABASE ===`;
   }
 
-  const systemInstruction = `You are the Gemini AI Plant Assistant for a Corrugation Factory (Corrugated Box & Board Manufacturing Plant).
-Your expertise covers:
-- Corrugator lines (single facer, double backer, glue unit, steam system, slitter scorer, cutoff knife, stacker)
-- Flute profiles (A-flute, B-flute, C-flute, E-flute, F-flute, microflute, double wall, triple wall)
-- Raw materials (Kraft liner, testliner, fluting medium, recycled paper, starch adhesive preparation, borax/caustic soda mix)
-- Quality control & physical testing (Bursting Strength / Mullen, Edge Crush Test (ECT), Box Compression Test (BCT), Cobb test, Flat Crush Test (FCT), ring crush)
-- Converting equipment (Flexo folder gluers, rotary die cutters, flatbed die cutters, stitchers, strappers)
-- Troubleshooting corrugator defects (warp like up-warp, down-warp, S-warp, blister delamination, washboarding, cracked scores, leaning flutes, wet streaks)
-- Factory production planning, reel inventory, waste minimization, and plant safety.${databaseContextPrompt}
+  const systemInstruction = `You are the Lead Plant Operations Director and AI Industrial Reasoning Brain for an advanced Corrugation Factory (Corrugated Packaging & Box Manufacturing Plant).
 
-Provide practical, direct, and technically accurate answers to help the factory supervisor and operators run the corrugation plant efficiently. Keep responses clear and structured.`;
+CRITICAL DIRECTIVE - SHORT AS POSSIBLE BUT HIGHLY DETAILED:
+1. The user explicitly requests: "answers are good and valid, but TOO LENGTHY. Make the answer good but as short as possible and detailed."
+2. STRICT BREVITY RULE: Maximum 120 - 150 words total! Do NOT write long essays or rambling preambles. Get straight to the point.
+3. HIGH DENSITY & SPECIFICITY: Include exact job names, stock sizes, GSM, machine names, starch gel temps (58-62°C), or glue gaps (0.22mm).
+4. STRUCTURE YOUR ANSWER INTO 3 SHORT, PUNCHY SECTIONS:
+   - ⚡ **Diagnosis & Thinking**: 1-2 brief bullets on bottlenecks, root causes, or material gaps.
+   - 📊 **Live Database Facts**: 1-2 bullets with key counts, jobs, or stock lots from the live data.
+   - 🎯 **Immediate Action Plan**: 2 sharp, prioritized steps for the factory floor.${databaseContextPrompt}
+
+Keep every point concise, technically sound, and immediately actionable.`;
 
   let replyText = '';
 
@@ -232,15 +239,21 @@ Provide practical, direct, and technically accurate answers to help the factory 
         },
       });
 
-      const modelsToTry = ['gemini-2.5-flash', 'gemini-3.8-flash', 'gemini-3.1-flash-lite'];
+      const modelsToTry = [
+        { name: 'gemini-3.8-flash', thinkingLevel: ThinkingLevel.HIGH },
+        { name: 'gemini-3.1-flash-lite', thinkingLevel: ThinkingLevel.LOW },
+      ];
 
-      for (const modelName of modelsToTry) {
+      for (const { name: modelName, thinkingLevel } of modelsToTry) {
         try {
           const response = await ai.models.generateContent({
             model: modelName,
             contents,
             config: {
               systemInstruction,
+              thinkingConfig: {
+                thinkingLevel,
+              },
               temperature: 0.7,
             },
           });

@@ -40,9 +40,6 @@ export const OrderInventoryView: React.FC<OrderInventoryViewProps> = ({
             <span className="text-xs font-mono text-amber-400 uppercase tracking-wide">Procurement & Allocation</span>
           </div>
           <h2 className="text-xl font-bold text-white tracking-tight">Order Inventory</h2>
-          <p className="text-xs text-slate-400 mt-1">
-            Allocate raw paper reels, cut board sheets, or order buffer stock
-          </p>
         </div>
 
         {/* Quick Order Without Job CTA */}

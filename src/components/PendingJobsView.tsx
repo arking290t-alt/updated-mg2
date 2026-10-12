@@ -13,12 +13,17 @@ import {
   Layers,
   AlertCircle,
   AlertTriangle,
-  X
+  X,
+  MoreVertical,
+  Eye,
+  Printer,
+  Flame
 } from 'lucide-react';
-import { CorrugationJob, JobPlacement, JobStatus } from '../types/job';
+import { CorrugationJob, InventoryItem, JobPlacement, JobStatus } from '../types/job';
 
 interface PendingJobsViewProps {
   jobs: CorrugationJob[];
+  inventory?: InventoryItem[];
   onOpenNewJobModal: () => void;
   onSetJobStatus: (jobId: string, status: JobStatus) => void;
   onDeleteJob: (jobId: string) => void;
@@ -32,6 +37,7 @@ interface StatusConfirmationState {
 
 export const PendingJobsView: React.FC<PendingJobsViewProps> = ({
   jobs,
+  inventory = [],
   onOpenNewJobModal,
   onSetJobStatus,
   onDeleteJob,
@@ -43,7 +49,11 @@ export const PendingJobsView: React.FC<PendingJobsViewProps> = ({
 
   // Confirmation state for marking completed / not completed
   const [confirmStatusModal, setConfirmStatusModal] = useState<StatusConfirmationState | null>(null);
+  // Delete confirmation state
   const [deleteConfirmJob, setDeleteConfirmJob] = useState<CorrugationJob | null>(null);
+  // 3-dot Menu & Job Detail Modal State
+  const [activeMenuJobId, setActiveMenuJobId] = useState<string | null>(null);
+  const [detailModalJob, setDetailModalJob] = useState<CorrugationJob | null>(null);
 
   // Filter jobs based on search, status, and placement
   const filteredJobs = jobs.filter((job) => {
@@ -92,9 +102,6 @@ export const PendingJobsView: React.FC<PendingJobsViewProps> = ({
             <span className="text-xs font-mono text-amber-400 uppercase tracking-wide">Plant Operations Queue</span>
           </div>
           <h2 className="text-xl font-bold text-white tracking-tight">Jobs Management Queue</h2>
-          <p className="text-xs text-slate-400 mt-1">
-            Track active production runs, mark complete / not completed with confirmation, and allocate job inventory
-          </p>
         </div>
 
         <button
@@ -332,10 +339,102 @@ export const PendingJobsView: React.FC<PendingJobsViewProps> = ({
                   <button
                     onClick={() => setDeleteConfirmJob(job)}
                     title="Delete job"
-                    className="p-1.5 text-slate-500 hover:text-rose-400 hover:bg-slate-800 rounded-xl transition-colors cursor-pointer ml-1"
+                    className="p-1.5 text-slate-500 hover:text-rose-400 hover:bg-slate-800 rounded-xl transition-colors cursor-pointer"
                   >
                     <Trash2 className="w-4 h-4" />
                   </button>
+
+                  {/* 3-DOTS ACTION MENU (Show Detail, Order, Mark, Delete) */}
+                  <div className="relative">
+                    <button
+                      type="button"
+                      onClick={() => setActiveMenuJobId(activeMenuJobId === job.id ? null : job.id)}
+                      title="More options & Show Detail"
+                      className={`p-1.5 rounded-xl border transition-colors cursor-pointer flex items-center justify-center ${
+                        activeMenuJobId === job.id
+                          ? 'bg-amber-500 text-slate-950 border-amber-400'
+                          : 'text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 border-slate-700'
+                      }`}
+                    >
+                      <MoreVertical className="w-4 h-4" />
+                    </button>
+
+                    {activeMenuJobId === job.id && (
+                      <>
+                        <div 
+                          className="fixed inset-0 z-20" 
+                          onClick={() => setActiveMenuJobId(null)} 
+                        />
+                        <div className="absolute right-0 top-full mt-1.5 w-48 bg-slate-900 border border-slate-800 rounded-xl shadow-2xl z-30 py-1 divide-y divide-slate-800/80 animate-in fade-in duration-100 font-sans">
+                          <div className="py-1">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setDetailModalJob(job);
+                                setActiveMenuJobId(null);
+                              }}
+                              className="w-full px-3 py-2 text-left text-xs font-bold text-amber-400 hover:bg-slate-800 flex items-center gap-2 cursor-pointer transition-colors"
+                            >
+                              <Eye className="w-3.5 h-3.5 text-amber-400" />
+                              <span>Show Detail</span>
+                            </button>
+                          </div>
+
+                          <div className="py-1">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setActiveMenuJobId(null);
+                                onOrderInventoryForJob(job);
+                              }}
+                              className="w-full px-3 py-2 text-left text-xs text-slate-300 hover:text-white hover:bg-slate-800 flex items-center gap-2 cursor-pointer transition-colors"
+                            >
+                              <Layers className="w-3.5 h-3.5 text-blue-400" />
+                              <span>Order Inventory</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setActiveMenuJobId(null);
+                                setConfirmStatusModal({ job, targetStatus: 'Completed' });
+                              }}
+                              className="w-full px-3 py-2 text-left text-xs text-slate-300 hover:text-emerald-400 hover:bg-slate-800 flex items-center gap-2 cursor-pointer transition-colors"
+                            >
+                              <CheckCircle className="w-3.5 h-3.5 text-emerald-400" />
+                              <span>Mark Complete</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setActiveMenuJobId(null);
+                                setConfirmStatusModal({ job, targetStatus: 'Not Completed' });
+                              }}
+                              className="w-full px-3 py-2 text-left text-xs text-slate-300 hover:text-rose-400 hover:bg-slate-800 flex items-center gap-2 cursor-pointer transition-colors"
+                            >
+                              <XCircle className="w-3.5 h-3.5 text-rose-400" />
+                              <span>Mark Not Completed</span>
+                            </button>
+                          </div>
+
+                          <div className="py-1">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setActiveMenuJobId(null);
+                                setDeleteConfirmJob(job);
+                              }}
+                              className="w-full px-3 py-2 text-left text-xs text-rose-400 hover:bg-rose-950/40 flex items-center gap-2 cursor-pointer transition-colors"
+                            >
+                              <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+                              <span>Delete Job</span>
+                            </button>
+                          </div>
+                        </div>
+                      </>
+                    )}
+                  </div>
                 </div>
 
               </div>
@@ -477,6 +576,228 @@ export const PendingJobsView: React.FC<PendingJobsViewProps> = ({
           </div>
         </div>
       )}
+
+      {/* MODAL: SHOW JOB DETAIL (Triggered by 3-dots action menu) */}
+      {detailModalJob && (() => {
+        const linkedItems = inventory.filter(
+          (i) =>
+            (i.jobId && i.jobId === detailModalJob.id) ||
+            (i.jobName && i.jobName.trim().toLowerCase() === detailModalJob.jobName.trim().toLowerCase())
+        );
+        const linkedBoardSize =
+          linkedItems.find((i) => i.jobSize)?.jobSize ||
+          detailModalJob.boardSize ||
+          'Not Ordered Yet';
+
+        const isCompleted = detailModalJob.status === 'Completed';
+        const isNotCompleted = detailModalJob.status === 'Not Completed';
+        const isUrgent = Boolean(detailModalJob.isUrgent);
+
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-150">
+            <div className="w-full max-w-2xl bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+              
+              {/* Header (Clean, no extra description) */}
+              <div className="px-6 py-4 border-b border-slate-800 flex items-center justify-between bg-slate-950/70">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-xl bg-amber-500/15 text-amber-400 border border-amber-500/30 flex items-center justify-center">
+                    <Eye className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-bold text-white">Job Details</h3>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setDetailModalJob(null)}
+                  className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition-colors cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Scrollable Content */}
+              <div className="p-6 overflow-y-auto space-y-5">
+                
+                {/* Badges Bar */}
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className={`px-2.5 py-1 rounded-lg text-xs font-bold font-mono border ${
+                    isCompleted
+                      ? 'bg-emerald-950 text-emerald-300 border-emerald-800'
+                      : isNotCompleted
+                      ? 'bg-rose-950 text-rose-300 border-rose-800'
+                      : 'bg-amber-950 text-amber-300 border-amber-800'
+                  }`}>
+                    {detailModalJob.status}
+                  </span>
+
+                  <span className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-slate-800 text-slate-300 border border-slate-700">
+                    {detailModalJob.jobPlacement} Line
+                  </span>
+
+                  {isUrgent && (
+                    <span className="px-2.5 py-1 rounded-lg text-xs font-bold bg-rose-500/20 text-rose-400 border border-rose-500/30 flex items-center gap-1">
+                      <Flame className="w-3 h-3 fill-rose-400" />
+                      <span>URGENT</span>
+                    </span>
+                  )}
+
+                  <span className="px-2.5 py-1 rounded-lg text-[11px] font-mono text-slate-500 bg-slate-950 border border-slate-800">
+                    ID: {detailModalJob.id}
+                  </span>
+                </div>
+
+                {/* Key Spec Grid */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  
+                  {/* Job Name */}
+                  <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-800 space-y-1">
+                    <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider block">Job Name</span>
+                    <span className="text-sm font-bold text-white block">{detailModalJob.jobName}</span>
+                  </div>
+
+                  {/* Job Type */}
+                  <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-800 space-y-1">
+                    <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider block">Job Type</span>
+                    <span className="text-sm font-semibold text-amber-400 block">{detailModalJob.jobType}</span>
+                  </div>
+
+                  {/* Board Size (Same as Board Ordered for the Job) */}
+                  <div className="p-3.5 rounded-xl bg-slate-950 border border-amber-500/30 space-y-1">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-semibold text-amber-400 uppercase tracking-wider">Board Size</span>
+                      <span className="text-[10px] text-slate-500 font-mono">(From Ordered Board)</span>
+                    </div>
+                    <span className="text-sm font-bold font-mono text-amber-300 block">{linkedBoardSize}</span>
+                  </div>
+
+                  {/* Job Size */}
+                  <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-800 space-y-1">
+                    <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider block">Job Size</span>
+                    <span className="text-sm font-bold font-mono text-sky-400 block">
+                      {detailModalJob.jobSize || 'Not Specified'}
+                    </span>
+                  </div>
+
+                  {/* Assigned Press Name */}
+                  <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-800 space-y-1">
+                    <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider block">Assigned Press</span>
+                    <span className="text-sm font-semibold text-slate-200 block">
+                      {detailModalJob.pressName || 'Not Assigned'}
+                    </span>
+                  </div>
+
+                  {/* Created Date */}
+                  <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-800 space-y-1">
+                    <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider block">Date Created</span>
+                    <span className="text-sm font-mono text-slate-300 block">{detailModalJob.createdAt}</span>
+                  </div>
+
+                </div>
+
+                {/* Notes */}
+                {detailModalJob.notes && (
+                  <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-800 space-y-1">
+                    <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider block">Notes</span>
+                    <p className="text-xs text-slate-300 leading-relaxed italic">{detailModalJob.notes}</p>
+                  </div>
+                )}
+
+                {/* Linked Stock & Die Inventory Details */}
+                <div className="space-y-2 pt-2 border-t border-slate-800">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wide flex items-center gap-1.5">
+                      <Layers className="w-3.5 h-3.5 text-blue-400" />
+                      <span>Ordered Stock & Die for this Job ({linkedItems.length})</span>
+                    </h4>
+                  </div>
+
+                  {linkedItems.length === 0 ? (
+                    <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 text-center space-y-2">
+                      <p className="text-xs text-slate-400">No raw stock or die has been ordered for this job yet.</p>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setDetailModalJob(null);
+                          onOrderInventoryForJob(detailModalJob);
+                        }}
+                        className="px-3 py-1.5 text-xs font-bold bg-amber-500 hover:bg-amber-400 text-slate-950 rounded-lg cursor-pointer transition-colors inline-flex items-center gap-1"
+                      >
+                        <Plus className="w-3 h-3" />
+                        <span>Order Board Stock or Die</span>
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {linkedItems.map((it) => (
+                        <div
+                          key={it.id}
+                          className="p-3 rounded-xl bg-slate-950 border border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs"
+                        >
+                          <div className="space-y-0.5">
+                            <div className="font-semibold text-white flex items-center gap-2">
+                              <span>{it.stockType}</span>
+                              {it.category === 'Die' && (
+                                <span className="px-1.5 py-0.2 rounded text-[10px] bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                                  Die Tool
+                                </span>
+                              )}
+                              {it.isUrgent && (
+                                <span className="px-1.5 py-0.2 rounded text-[10px] bg-rose-500/20 text-rose-300 border border-rose-500/30">
+                                  🔥 Urgent
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-[11px] text-slate-400 font-mono">
+                              Size / Specs: {it.jobSize || 'Standard'} · Supplier: {it.receivingFrom} · Qty: {it.quantity}
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-2 self-start sm:self-auto font-mono text-[11px]">
+                            <span className={`px-2 py-0.5 rounded font-bold ${
+                              it.status === 'Received'
+                                ? 'bg-emerald-950 text-emerald-400 border border-emerald-800'
+                                : 'bg-amber-950 text-amber-400 border border-amber-800'
+                            }`}>
+                              {it.status}
+                            </span>
+                            <span className="text-slate-500 text-[10px]">{it.orderedAt?.split(' ')[0]}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+              </div>
+
+              {/* Footer Actions */}
+              <div className="px-6 py-3.5 bg-slate-950 border-t border-slate-800 flex items-center justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDetailModalJob(null);
+                    onOrderInventoryForJob(detailModalJob);
+                  }}
+                  className="px-4 py-2 text-xs font-bold text-slate-950 bg-amber-500 hover:bg-amber-400 rounded-xl transition-colors cursor-pointer flex items-center gap-1.5"
+                >
+                  <Layers className="w-3.5 h-3.5" />
+                  <span>Order Stock / Die</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDetailModalJob(null)}
+                  className="px-4 py-2 text-xs font-semibold text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-xl transition-colors cursor-pointer"
+                >
+                  Close
+                </button>
+              </div>
+
+            </div>
+          </div>
+        );
+      })()}
 
     </div>
   );

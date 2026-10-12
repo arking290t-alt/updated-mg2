@@ -23,6 +23,7 @@ export const NewJobModal: React.FC<NewJobModalProps> = ({
   const [selectedType, setSelectedType] = useState<string>('');
   const [placement, setPlacement] = useState<JobPlacement>('Factory');
   const [notes, setNotes] = useState('');
+  const [jobDate, setJobDate] = useState(() => new Date().toISOString().split('T')[0]);
   
   // Job Type Search & Add state
   const [typeSearch, setTypeSearch] = useState('');
@@ -87,7 +88,8 @@ export const NewJobModal: React.FC<NewJobModalProps> = ({
       jobType: selectedType.trim(),
       jobPlacement: placement,
       notes: notes.trim() || undefined,
-    });
+      createdAt: `${jobDate} 12:00`,
+    } as any);
 
     // Reset fields
     setJobName('');
@@ -106,7 +108,6 @@ export const NewJobModal: React.FC<NewJobModalProps> = ({
         <div className="px-6 py-4 border-b border-slate-800 flex items-center justify-between bg-slate-950/60">
           <div>
             <h2 className="text-base font-bold text-white">Create New Job</h2>
-            <p className="text-xs text-slate-400 mt-0.5">Enter corrugation job specifications and placement</p>
           </div>
           <button
             type="button"
@@ -142,6 +143,20 @@ export const NewJobModal: React.FC<NewJobModalProps> = ({
               }}
               placeholder="e.g. 5-Ply Master Carton Production Batch 102"
               className="w-full px-3.5 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-amber-500 transition-colors"
+            />
+          </div>
+
+          {/* Date */}
+          <div>
+            <label className="block text-xs font-semibold text-slate-200 mb-1.5">
+              Job Date <span className="text-amber-400">*</span>
+            </label>
+            <input
+              type="date"
+              required
+              value={jobDate}
+              onChange={(e) => setJobDate(e.target.value)}
+              className="w-full px-3.5 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-sm text-slate-100 focus:outline-none focus:border-amber-500 [color-scheme:dark]"
             />
           </div>
 

@@ -17,7 +17,8 @@ import {
   Database,
   CloudCheck,
   RefreshCw,
-  AlertCircle
+  AlertCircle,
+  BarChart3
 } from 'lucide-react';
 import { GeminiChatBot } from './GeminiChatBot';
 import { NewJobModal } from './NewJobModal';
@@ -25,22 +26,27 @@ import { PendingJobsView } from './PendingJobsView';
 import { OrderInventoryModal } from './OrderInventoryModal';
 import { OrderInventoryView } from './OrderInventoryView';
 import { ExistingInventoryView } from './ExistingInventoryView';
+import { PlantDataView } from './PlantDataView';
 import { 
   CorrugationJob, 
   InventoryItem, 
-  JobStatus,
+  JobStatus, 
   INITIAL_JOB_TYPES, 
   INITIAL_STOCK_TYPES,
   COMMON_SUPPLIERS,
-  INITIAL_PRESS_NAMES
+  INITIAL_PRESS_NAMES,
+  INITIAL_DIE_MAKERS,
+  INITIAL_PUNCH_TYPES
 } from '../types/job';
 import {
   subscribeToJobs,
   addJobToFirestore,
   updateJobStatusInFirestore,
+  updateJobDetailsInFirestore,
   deleteJobFromFirestore,
   subscribeToInventory,
   addInventoryItemsToFirestore,
+  updateInventoryItemInFirestore,
   deleteInventoryItemFromFirestore,
   subscribeToFactorySettings,
   addCustomOptionToFirestore,
@@ -61,9 +67,9 @@ export const EmptyDashboard: React.FC<EmptyDashboardProps> = ({ onLogout }) => {
   const [isJobsMenuExpanded, setIsJobsMenuExpanded] = useState(true);
   const [isInventoryMenuExpanded, setIsInventoryMenuExpanded] = useState(true);
   
-  // Views: dashboard | pending_jobs | order_inventory | existing_inventory
+  // Views: dashboard | pending_jobs | order_inventory | existing_inventory | data
   const [currentView, setCurrentView] = useState<
-    'dashboard' | 'pending_jobs' | 'order_inventory' | 'existing_inventory'
+    'dashboard' | 'pending_jobs' | 'order_inventory' | 'existing_inventory' | 'data'
   >('dashboard');
 
   // Modals State
@@ -81,6 +87,8 @@ export const EmptyDashboard: React.FC<EmptyDashboardProps> = ({ onLogout }) => {
   const [stockTypes, setStockTypes] = useState<string[]>(() => getPersistedSettings().stockTypes);
   const [suppliers, setSuppliers] = useState<string[]>(() => getPersistedSettings().suppliers);
   const [presses, setPresses] = useState<string[]>(() => getPersistedSettings().presses);
+  const [dieMakers, setDieMakers] = useState<string[]>(() => getPersistedSettings().dieMakers || INITIAL_DIE_MAKERS);
+  const [punchTypes, setPunchTypes] = useState<string[]>(() => getPersistedSettings().punchTypes || INITIAL_PUNCH_TYPES);
 
   // Jobs List (Initialized from localStorage so deletions remain deleted and additions persist on refresh)
   const [jobs, setJobs] = useState<CorrugationJob[]>(() => getPersistedJobs());
@@ -127,6 +135,12 @@ export const EmptyDashboard: React.FC<EmptyDashboardProps> = ({ onLogout }) => {
         setStockTypes(settings.stockTypes);
         setSuppliers(settings.suppliers);
         setPresses(settings.presses);
+        if (settings.dieMakers && settings.dieMakers.length > 0) {
+          setDieMakers(settings.dieMakers);
+        }
+        if (settings.punchTypes && settings.punchTypes.length > 0) {
+          setPunchTypes(settings.punchTypes);
+        }
       },
       (error) => {
         console.warn('Settings Firestore listener warning:', error);
@@ -250,6 +264,30 @@ export const EmptyDashboard: React.FC<EmptyDashboardProps> = ({ onLogout }) => {
     }
   };
 
+  // Handler: Add custom Die Maker
+  const handleAddNewDieMaker = async (newDieMaker: string) => {
+    if (!dieMakers.includes(newDieMaker)) {
+      setDieMakers((prev) => [...prev, newDieMaker]);
+      try {
+        await addCustomOptionToFirestore('dieMakers', newDieMaker);
+      } catch (e) {
+        console.error(e);
+      }
+    }
+  };
+
+  // Handler: Add custom Punch Type
+  const handleAddNewPunchType = async (newPunchType: string) => {
+    if (!punchTypes.includes(newPunchType)) {
+      setPunchTypes((prev) => [...prev, newPunchType]);
+      try {
+        await addCustomOptionToFirestore('punchTypes', newPunchType);
+      } catch (e) {
+        console.error(e);
+      }
+    }
+  };
+
   // Handler: Open Order Inventory for a specific Job
   const handleOpenOrderForJob = (job: CorrugationJob) => {
     setTargetJobForInventory(job);
@@ -262,9 +300,9 @@ export const EmptyDashboard: React.FC<EmptyDashboardProps> = ({ onLogout }) => {
     setIsOrderInventoryModalOpen(true);
   };
 
-  // Handler: Save Inventory Orders (supports multiple stock items for a single order, saves to Firestore)
+  // Handler: Save Inventory Orders (supports multiple stock & die items, preserves date & status, saves to Firestore)
   const handleSaveInventoryOrders = async (
-    orderList: Omit<InventoryItem, 'id' | 'orderedAt' | 'status'>[]
+    orderList: (Omit<InventoryItem, 'id'>)[]
   ) => {
     const now = new Date();
     const timestamp = `${now.toISOString().split('T')[0]} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
@@ -272,8 +310,9 @@ export const EmptyDashboard: React.FC<EmptyDashboardProps> = ({ onLogout }) => {
     const newItems: InventoryItem[] = orderList.map((order, idx) => ({
       id: `inv-${Date.now()}-${idx}`,
       ...order,
-      orderedAt: timestamp,
-      status: 'Received',
+      orderedAt: order.orderedAt || timestamp,
+      status: order.status || 'Not Received',
+      isUrgent: Boolean(order.isUrgent),
     }));
 
     // Optimistic local update
@@ -339,9 +378,56 @@ export const EmptyDashboard: React.FC<EmptyDashboardProps> = ({ onLogout }) => {
     }
   };
 
+  const handleUpdateJobDetails = async (jobId: string, updates: Partial<CorrugationJob>) => {
+    setJobs((prev) =>
+      prev.map((j) => (j.id === jobId ? { ...j, ...updates } : j))
+    );
+    try {
+      await updateJobDetailsInFirestore(jobId, updates);
+      setSyncStatus('Job updated in Firebase');
+      setTimeout(() => setSyncStatus('Live Connected (mg-manager-3ab66)'), 2500);
+    } catch (err) {
+      console.error('Failed to update job details:', err);
+    }
+  };
+
+  const handleUpdateInventoryDetails = async (itemId: string, updates: Partial<InventoryItem>) => {
+    setInventory((prev) =>
+      prev.map((it) => (it.id === itemId ? { ...it, ...updates } : it))
+    );
+    try {
+      await updateInventoryItemInFirestore(itemId, updates);
+      setSyncStatus('Inventory updated in Firebase');
+      setTimeout(() => setSyncStatus('Live Connected (mg-manager-3ab66)'), 2500);
+    } catch (err) {
+      console.error('Failed to update inventory details:', err);
+    }
+  };
+
+  const handleAddCustomInventory = async (newItem: Omit<InventoryItem, 'id' | 'orderedAt'>) => {
+    const now = new Date();
+    const timestamp = `${now.toISOString().split('T')[0]} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+    const item: InventoryItem = {
+      id: `inv-${Date.now()}`,
+      ...newItem,
+      orderedAt: timestamp,
+    };
+    setInventory((prev) => [item, ...prev]);
+    try {
+      await addInventoryItemsToFirestore([item]);
+      setSyncStatus('Stock saved to Firebase');
+      setTimeout(() => setSyncStatus('Live Connected (mg-manager-3ab66)'), 2500);
+    } catch (err) {
+      console.error('Failed to add custom inventory:', err);
+    }
+  };
+
   const activeQueueCount = jobs.filter((j) => j.status !== 'Completed').length;
   const notCompletedCount = jobs.filter((j) => j.status === 'Not Completed').length;
   const jobsNeedingInventoryCount = jobs.filter((j) => !j.hasInventory).length;
+  const urgentStockCount = inventory.filter((i) => i.isUrgent).length;
+  const urgentJobCount = jobs.filter((j) => j.isUrgent).length;
+  const urgentTotalCount = urgentStockCount + urgentJobCount;
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col antialiased">
@@ -412,6 +498,26 @@ export const EmptyDashboard: React.FC<EmptyDashboardProps> = ({ onLogout }) => {
               }`}
             >
               <span>Inventory ({inventory.length})</span>
+            </button>
+            <button
+              onClick={() => setCurrentView('data')}
+              className={`px-3 py-1.5 text-xs font-semibold rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap ${
+                currentView === 'data'
+                  ? 'bg-amber-500 text-slate-950 font-bold shadow-xs'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              <Database className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Data</span>
+              {urgentTotalCount > 0 ? (
+                <span className="px-1.5 py-0.2 bg-rose-500 text-white text-[10px] font-mono font-bold rounded-full">
+                  {urgentTotalCount} Urgent
+                </span>
+              ) : (
+                <span className="text-[10px] font-mono text-slate-500">
+                  Stock & Press
+                </span>
+              )}
             </button>
           </div>
 
@@ -657,6 +763,51 @@ export const EmptyDashboard: React.FC<EmptyDashboardProps> = ({ onLogout }) => {
                 )}
               </div>
 
+              {/* 3. SECTION: DATA (Ordered Stock & Press Operations) */}
+              <div>
+                <button
+                  onClick={() => {
+                    setCurrentView('data');
+                    setIsDrawerOpen(false);
+                  }}
+                  className={`w-full flex items-center justify-between px-3.5 py-3 rounded-xl text-xs font-bold transition-all cursor-pointer shadow-xs ${
+                    currentView === 'data'
+                      ? 'bg-amber-500 text-slate-950 font-bold shadow-md'
+                      : 'bg-slate-950/80 text-white border border-slate-800 hover:border-amber-500/50 hover:bg-slate-900'
+                  }`}
+                >
+                  <div className="flex items-center gap-2.5">
+                    <div className={`w-6 h-6 rounded-md flex items-center justify-center ${
+                      currentView === 'data'
+                        ? 'bg-slate-950 text-amber-400'
+                        : 'bg-emerald-500/20 text-emerald-400'
+                    }`}>
+                      <Database className="w-3.5 h-3.5" />
+                    </div>
+                    <div className="text-left">
+                      <div className="leading-tight">Data</div>
+                      <div className={`text-[10px] font-normal ${currentView === 'data' ? 'text-slate-900' : 'text-slate-400'}`}>
+                        Ordered Stock & Press Data
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    {urgentTotalCount > 0 && (
+                      <span className="px-1.5 py-0.5 rounded-full text-[10px] font-mono bg-rose-500 text-white font-bold animate-pulse">
+                        {urgentTotalCount} Urgent
+                      </span>
+                    )}
+                    <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded-full ${
+                      currentView === 'data'
+                        ? 'bg-slate-950 text-amber-400 font-bold'
+                        : 'bg-slate-800 text-slate-300'
+                    }`}>
+                      Chart & Export
+                    </span>
+                  </div>
+                </button>
+              </div>
+
               {/* Firebase Database Status Box */}
               <div className="p-3 rounded-xl bg-slate-950 border border-slate-800/80 text-xs space-y-1.5">
                 <div className="flex items-center justify-between text-slate-300 font-medium">
@@ -774,13 +925,20 @@ export const EmptyDashboard: React.FC<EmptyDashboardProps> = ({ onLogout }) => {
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-3 pt-2">
+                  <div className="flex flex-col sm:flex-row items-center gap-3 pt-2">
                     <button
                       onClick={() => setCurrentView('order_inventory')}
-                      className="flex-1 py-2 text-xs font-semibold text-slate-200 bg-slate-800 hover:bg-slate-700 rounded-xl transition-colors cursor-pointer flex items-center justify-center gap-2"
+                      className="w-full sm:flex-1 py-2 text-xs font-semibold text-slate-200 bg-slate-800 hover:bg-slate-700 rounded-xl transition-colors cursor-pointer flex items-center justify-center gap-2"
                     >
                       <Layers className="w-4 h-4 text-amber-400" />
                       <span>Order Inventory Portal</span>
+                    </button>
+                    <button
+                      onClick={() => setCurrentView('data')}
+                      className="w-full sm:flex-1 py-2 text-xs font-semibold text-emerald-300 bg-emerald-950/60 hover:bg-emerald-900/60 border border-emerald-800/80 rounded-xl transition-colors cursor-pointer flex items-center justify-center gap-2 shadow-xs"
+                    >
+                      <Database className="w-4 h-4 text-emerald-400" />
+                      <span>Data (Stock & Press)</span>
                     </button>
                   </div>
                 </div>
@@ -819,6 +977,7 @@ export const EmptyDashboard: React.FC<EmptyDashboardProps> = ({ onLogout }) => {
         {currentView === 'pending_jobs' && (
           <PendingJobsView
             jobs={jobs}
+            inventory={inventory}
             onOpenNewJobModal={() => setIsNewJobModalOpen(true)}
             onSetJobStatus={handleSetJobStatus}
             onDeleteJob={handleDeleteJob}
@@ -841,6 +1000,25 @@ export const EmptyDashboard: React.FC<EmptyDashboardProps> = ({ onLogout }) => {
             inventory={inventory}
             onOpenOrderModal={handleOpenOrderWithoutJob}
             onDeleteInventory={handleDeleteInventory}
+          />
+        )}
+
+        {/* VIEW 5: Data Operations Registry View (Ordered Stock & Press Data) */}
+        {currentView === 'data' && (
+          <PlantDataView
+            jobs={jobs}
+            inventory={inventory}
+            availablePresses={presses}
+            availableStockTypes={stockTypes}
+            availableSuppliers={suppliers}
+            onUpdateJobDetails={handleUpdateJobDetails}
+            onDeleteJob={handleDeleteJob}
+            onAddJob={async (newJobData) => {
+              await handleSaveJob(newJobData as any);
+            }}
+            onUpdateInventoryDetails={handleUpdateInventoryDetails}
+            onDeleteInventory={handleDeleteInventory}
+            onAddInventoryItem={handleAddCustomInventory}
           />
         )}
 
@@ -871,6 +1049,13 @@ export const EmptyDashboard: React.FC<EmptyDashboardProps> = ({ onLogout }) => {
         onAddNewPress={handleAddNewPress}
         onDeletePress={handleDeletePress}
         targetJob={targetJobForInventory}
+        availableJobs={jobs}
+        availableJobTypes={jobTypes}
+        onAddNewJobType={handleAddNewJobType}
+        availableDieMakers={dieMakers}
+        onAddNewDieMaker={handleAddNewDieMaker}
+        availablePunchTypes={punchTypes}
+        onAddNewPunchType={handleAddNewPunchType}
       />
 
       {/* Footer */}

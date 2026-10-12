@@ -12,6 +12,11 @@ export interface CorrugationJob {
   hasInventory?: boolean;
   inventoryCount?: number;
   inventoryOrderId?: string;
+  // Press / Machine specifics
+  boardSize?: string;
+  jobSize?: string;
+  pressName?: string;
+  isUrgent?: boolean;
 }
 
 export interface InventoryItem {
@@ -24,9 +29,14 @@ export interface InventoryItem {
   quantity: number;
   jobId?: string;
   jobName?: string;
+  jobType?: string;
   orderedAt: string;
-  status: 'Received' | 'In Transit';
+  status: 'Received' | 'Not Received' | 'In Transit';
+  isUrgent?: boolean;
   notes?: string;
+  category?: 'Stock' | 'Die';
+  dieMaker?: string;
+  punchType?: string;
 }
 
 export interface StockItemEntry {
@@ -38,6 +48,15 @@ export interface StockItemEntry {
   pressName?: string;
   quantity: number;
   notes?: string;
+  category?: 'Stock' | 'Die';
+  dieMaker?: string;
+  punchType?: string;
+  jobId?: string;
+  jobName?: string;
+  jobType?: string;
+  orderedAt?: string;
+  status?: 'Received' | 'Not Received' | 'In Transit';
+  isUrgent?: boolean;
 }
 
 export const INITIAL_JOB_TYPES: string[] = [];
@@ -75,3 +94,21 @@ export const INITIAL_PRESS_NAMES: string[] = [
   'Curioni 2800 2-Color Printer',
   'Martin Transline Flexo Slotter',
 ];
+
+export const INITIAL_DIE_MAKERS: string[] = [
+  'Apex Laser Dies',
+  'Matrix Tooling Works',
+  'Standard Punch & Die Co.',
+  'Precision Rotary Dies',
+  'National Steel Rule Dies',
+];
+
+export const INITIAL_PUNCH_TYPES: string[] = [
+  'Rotary Die Punch',
+  'Flatbed Cutting Die',
+  'Creasing & Scoring Die',
+  'Stripping Die Tool',
+  'Embossing Punch',
+  'Slotting & Perforation Die',
+];
+

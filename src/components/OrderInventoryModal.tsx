@@ -14,15 +14,20 @@ import {
   Tag,
   Trash2,
   PackagePlus,
-  AlertCircle
+  AlertCircle,
+  Scissors,
+  Calendar,
+  Flame,
+  CheckCircle2,
+  Clock
 } from 'lucide-react';
-import { InventoryItem, CorrugationJob, StockItemEntry } from '../types/job';
+import { InventoryItem, CorrugationJob, StockItemEntry, INITIAL_DIE_MAKERS, INITIAL_PUNCH_TYPES } from '../types/job';
 
 interface OrderInventoryModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSaveInventoryOrders: (
-    orders: Omit<InventoryItem, 'id' | 'orderedAt' | 'status'>[]
+    orders: (Omit<InventoryItem, 'id'>)[]
   ) => void;
   availableStockTypes: string[];
   onAddNewStockType: (newType: string) => void;
@@ -34,6 +39,14 @@ interface OrderInventoryModalProps {
   onAddNewPress: (newPress: string) => void;
   onDeletePress?: (press: string) => void;
   targetJob?: CorrugationJob | null;
+  // Die & Job options
+  availableJobs?: CorrugationJob[];
+  availableJobTypes?: string[];
+  onAddNewJobType?: (newType: string) => void;
+  availableDieMakers?: string[];
+  onAddNewDieMaker?: (newMaker: string) => void;
+  availablePunchTypes?: string[];
+  onAddNewPunchType?: (newPunch: string) => void;
 }
 
 export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
@@ -50,7 +63,41 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
   onAddNewPress,
   onDeletePress,
   targetJob,
+  availableJobs = [],
+  availableJobTypes = [],
+  onAddNewJobType,
+  availableDieMakers = INITIAL_DIE_MAKERS,
+  onAddNewDieMaker,
+  availablePunchTypes = INITIAL_PUNCH_TYPES,
+  onAddNewPunchType,
 }) => {
+  const todayIso = new Date().toISOString().split('T')[0];
+
+  // Primary Order Category: Stock vs Die
+  const [activeCategory, setActiveCategory] = useState<'Stock' | 'Die'>('Stock');
+
+  // Common Date, Urgent, and Status Marking
+  const [orderDate, setOrderDate] = useState<string>(todayIso);
+  const [isUrgent, setIsUrgent] = useState<boolean>(false);
+  const [orderStatus, setOrderStatus] = useState<'Not Received' | 'Received'>('Not Received');
+
+  // DIE ORDER SPECIFIC STATE
+  const [dieJobName, setDieJobName] = useState<string>(targetJob ? targetJob.jobName : '');
+  const [dieJobType, setDieJobType] = useState<string>(targetJob ? targetJob.jobType : (availableJobTypes[0] || 'General Corrugation'));
+  const [isAddingNewJobType, setIsAddingNewJobType] = useState(false);
+  const [newJobTypeInput, setNewJobTypeInput] = useState('');
+
+  const [dieMaker, setDieMaker] = useState<string>(availableDieMakers[0] || 'Apex Laser Dies');
+  const [isAddingNewDieMaker, setIsAddingNewDieMaker] = useState(false);
+  const [newDieMakerInput, setNewDieMakerInput] = useState('');
+
+  const [punchType, setPunchType] = useState<string>(availablePunchTypes[0] || 'Rotary Die Punch');
+  const [isAddingNewPunchType, setIsAddingNewPunchType] = useState(false);
+  const [newPunchTypeInput, setNewPunchTypeInput] = useState('');
+
+  const [dieQuantity, setDieQuantity] = useState<number>(1);
+  const [dieNotes, setDieNotes] = useState<string>('');
+
   // Current Stock Item Editor State
   const [stockType, setStockType] = useState('');
   const [stockSearch, setStockSearch] = useState('');
@@ -61,7 +108,7 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
   const [jobSize, setJobSize] = useState('1200 x 850 mm');
 
   // Receiving From (Search & Save)
-  const [receivingFrom, setReceivingFrom] = useState(availableSuppliers[0] || 'International Paper Mills');
+  const [receivingFrom, setReceivingFrom] = useState(availableSuppliers[0] || 'Varun Board');
   const [supplierSearch, setSupplierSearch] = useState('');
   const [isSupplierDropdownOpen, setIsSupplierDropdownOpen] = useState(false);
   const [isAddingNewSupplier, setIsAddingNewSupplier] = useState(false);
@@ -202,12 +249,41 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
     return true;
   };
 
+  // Handlers for Die Type, Die Maker, Punch Type
+  const handleSaveDieMaker = () => {
+    const raw = newDieMakerInput.trim();
+    if (!raw) return;
+    onAddNewDieMaker?.(raw);
+    setDieMaker(raw);
+    setNewDieMakerInput('');
+    setIsAddingNewDieMaker(false);
+  };
+
+  const handleSavePunchType = () => {
+    const raw = newPunchTypeInput.trim();
+    if (!raw) return;
+    onAddNewPunchType?.(raw);
+    setPunchType(raw);
+    setNewPunchTypeInput('');
+    setIsAddingNewPunchType(false);
+  };
+
+  const handleSaveJobType = () => {
+    const raw = newJobTypeInput.trim();
+    if (!raw) return;
+    onAddNewJobType?.(raw);
+    setDieJobType(raw);
+    setNewJobTypeInput('');
+    setIsAddingNewJobType(false);
+  };
+
   // Add current configured stock to the multi-stock queue
   const handleAddCurrentStockToQueue = () => {
     if (!validateCurrentItem()) return;
 
     const newEntry: StockItemEntry = {
       id: `entry-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+      category: 'Stock',
       stockType: stockType.trim(),
       jobSize: jobSize.trim(),
       receivingFrom: receivingFrom.trim(),
@@ -215,6 +291,11 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
       pressName: isPrinted ? pressName.trim() : undefined,
       quantity: Number(quantity),
       notes: notes.trim() || undefined,
+      orderedAt: `${orderDate} 12:00`,
+      status: orderStatus,
+      isUrgent: isUrgent,
+      jobId: targetJob ? targetJob.id : undefined,
+      jobName: targetJob ? targetJob.jobName : undefined,
     };
 
     setStockQueue((prev) => [...prev, newEntry]);
@@ -222,6 +303,44 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
     // Reset fields for the next stock addition
     setStockType('');
     setNotes('');
+    setErrorMessage('');
+  };
+
+  // Add current configured DIE item to the queue
+  const handleAddDieToQueue = () => {
+    if (!dieJobName.trim()) {
+      setErrorMessage('Please select or enter the Job Name for this Die order.');
+      return;
+    }
+    if (!dieMaker.trim()) {
+      setErrorMessage('Please select or add a Die Maker.');
+      return;
+    }
+    if (!punchType.trim()) {
+      setErrorMessage('Please select or add a Punch Type.');
+      return;
+    }
+
+    const newEntry: StockItemEntry = {
+      id: `die-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+      category: 'Die',
+      stockType: `Die: ${punchType.trim()} (${dieMaker.trim()})`,
+      jobSize: punchType.trim(),
+      receivingFrom: dieMaker.trim(),
+      dieMaker: dieMaker.trim(),
+      punchType: punchType.trim(),
+      jobName: dieJobName.trim(),
+      jobType: dieJobType.trim(),
+      isPrinted: false,
+      quantity: Number(dieQuantity) || 1,
+      orderedAt: `${orderDate} 12:00`,
+      status: orderStatus,
+      isUrgent: isUrgent,
+      notes: dieNotes.trim() || undefined,
+    };
+
+    setStockQueue((prev) => [...prev, newEntry]);
+    setDieNotes('');
     setErrorMessage('');
   };
 
@@ -261,11 +380,12 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
 
     let allItemsToSubmit: StockItemEntry[] = [...stockQueue];
 
-    // If queue is empty or user also has filled in current form fields, validate and include it
-    if (stockType.trim()) {
+    // If on Stock tab and has filled in current form fields, validate and include it
+    if (activeCategory === 'Stock' && stockType.trim()) {
       if (!validateCurrentItem()) return;
       allItemsToSubmit.push({
         id: `entry-${Date.now()}`,
+        category: 'Stock',
         stockType: stockType.trim(),
         jobSize: jobSize.trim(),
         receivingFrom: receivingFrom.trim(),
@@ -273,32 +393,67 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
         pressName: isPrinted ? pressName.trim() : undefined,
         quantity: Number(quantity),
         notes: notes.trim() || undefined,
+        orderedAt: `${orderDate} 12:00`,
+        status: orderStatus,
+        isUrgent: isUrgent,
+        jobId: targetJob ? targetJob.id : undefined,
+        jobName: targetJob ? targetJob.jobName : undefined,
+      });
+    } else if (activeCategory === 'Die' && dieJobName.trim()) {
+      allItemsToSubmit.push({
+        id: `die-${Date.now()}`,
+        category: 'Die',
+        stockType: `Die: ${punchType.trim()} (${dieMaker.trim()})`,
+        jobSize: punchType.trim(),
+        receivingFrom: dieMaker.trim(),
+        dieMaker: dieMaker.trim(),
+        punchType: punchType.trim(),
+        jobName: dieJobName.trim(),
+        jobType: dieJobType.trim(),
+        isPrinted: false,
+        quantity: Number(dieQuantity) || 1,
+        orderedAt: `${orderDate} 12:00`,
+        status: orderStatus,
+        isUrgent: isUrgent,
+        notes: dieNotes.trim() || undefined,
       });
     }
 
     if (allItemsToSubmit.length === 0) {
-      setErrorMessage('Please add at least one stock item to order.');
+      setErrorMessage(
+        activeCategory === 'Die'
+          ? 'Please enter the Job Name, Die Maker, and Punch Type to order a Die.'
+          : 'Please select or add at least one stock item to order.'
+      );
       return;
     }
 
     const payload = allItemsToSubmit.map((item) => ({
+      category: item.category || 'Stock',
       stockType: item.stockType,
       jobSize: item.jobSize,
       receivingFrom: item.receivingFrom,
+      dieMaker: item.dieMaker,
+      punchType: item.punchType,
       isPrinted: item.isPrinted,
       pressName: item.pressName,
       quantity: item.quantity,
-      jobId: targetJob ? targetJob.id : undefined,
-      jobName: targetJob ? targetJob.jobName : undefined,
+      jobId: item.jobId || (targetJob ? targetJob.id : undefined),
+      jobName: item.jobName || (targetJob ? targetJob.jobName : undefined),
+      jobType: item.jobType,
       notes: item.notes,
+      orderedAt: item.orderedAt || `${orderDate} 12:00`,
+      status: item.status || orderStatus,
+      isUrgent: item.isUrgent !== undefined ? item.isUrgent : isUrgent,
     }));
 
-    onSaveInventoryOrders(payload);
+    onSaveInventoryOrders(payload as any);
 
     // Reset everything
     setStockQueue([]);
     setStockType('');
     setNotes('');
+    setDieNotes('');
     setErrorMessage('');
     onClose();
   };
@@ -307,22 +462,15 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/80 backdrop-blur-sm">
       <div className="w-full max-w-2xl bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl overflow-hidden max-h-[92vh] flex flex-col animate-in fade-in zoom-in-95 duration-150">
         
-        {/* Header */}
+        {/* Header (Clean, no extra description) */}
         <div className="px-6 py-4 border-b border-slate-800 flex items-center justify-between bg-slate-950/80 shrink-0">
-          <div>
-            <h2 className="text-base font-bold text-white flex items-center gap-2">
-              <Layers className="w-4 h-4 text-amber-400" />
-              <span>{targetJob ? 'Order Inventory for Job' : 'Order General Inventory'}</span>
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-lg bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400">
+              <Layers className="w-4 h-4" />
+            </div>
+            <h2 className="text-base font-bold text-white">
+              {targetJob ? `Order Inventory: ${targetJob.jobName}` : 'Order Inventory'}
             </h2>
-            <p className="text-xs text-slate-400 mt-0.5">
-              {targetJob ? (
-                <span>
-                  Allocating material for: <strong className="text-amber-400 font-semibold">{targetJob.jobName}</strong>
-                </span>
-              ) : (
-                'Order raw materials and board stock for plant warehouse buffer'
-              )}
-            </p>
           </div>
           <button
             type="button"
@@ -330,6 +478,41 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
             className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition-colors cursor-pointer"
           >
             <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        {/* Category Switcher Tabs: 1. Paper / Board Stock, 2. Die */}
+        <div className="px-6 pt-2 bg-slate-950/60 border-b border-slate-800 flex gap-1 shrink-0">
+          <button
+            type="button"
+            onClick={() => {
+              setActiveCategory('Stock');
+              setErrorMessage('');
+            }}
+            className={`flex items-center gap-2 px-4 py-2.5 text-xs font-bold border-b-2 transition-all cursor-pointer ${
+              activeCategory === 'Stock'
+                ? 'border-amber-500 text-amber-400 bg-amber-500/5'
+                : 'border-transparent text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <Layers className="w-3.5 h-3.5" />
+            <span>1. Raw Paper / Board Stock</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setActiveCategory('Die');
+              setErrorMessage('');
+            }}
+            className={`flex items-center gap-2 px-4 py-2.5 text-xs font-bold border-b-2 transition-all cursor-pointer ${
+              activeCategory === 'Die'
+                ? 'border-purple-500 text-purple-400 bg-purple-500/5'
+                : 'border-transparent text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <Scissors className="w-3.5 h-3.5" />
+            <span>2. Die Tooling Order</span>
           </button>
         </div>
 
@@ -344,16 +527,83 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
         {/* Form Body */}
         <div className="p-6 space-y-5 overflow-y-auto flex-1">
           
-          {/* MULTIPLE STOCK QUEUE SUMMARY (shows when items are added) */}
+          {/* COMMON DATE, PRIORITY & STATUS CONTROLS */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 p-3.5 bg-slate-950 rounded-xl border border-slate-800">
+            {/* 1. Date Option */}
+            <div>
+              <label className="block text-xs font-semibold text-slate-300 mb-1 flex items-center gap-1.5">
+                <Calendar className="w-3.5 h-3.5 text-amber-400" />
+                <span>Order Date <span className="text-amber-400">*</span></span>
+              </label>
+              <input
+                type="date"
+                required
+                value={orderDate}
+                onChange={(e) => setOrderDate(e.target.value)}
+                className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-800 rounded-lg text-xs text-white [color-scheme:dark] focus:outline-none focus:border-amber-500"
+              />
+            </div>
+
+            {/* 2. Urgent Priority Toggle */}
+            <div>
+              <label className="block text-xs font-semibold text-slate-300 mb-1 flex items-center gap-1.5">
+                <Flame className="w-3.5 h-3.5 text-rose-400" />
+                <span>Priority Flag</span>
+              </label>
+              <button
+                type="button"
+                onClick={() => setIsUrgent(!isUrgent)}
+                className={`w-full py-1.5 px-3 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer border ${
+                  isUrgent
+                    ? 'bg-rose-500/20 text-rose-400 border-rose-500/50 shadow-xs'
+                    : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200'
+                }`}
+              >
+                <Flame className={`w-3.5 h-3.5 ${isUrgent ? 'fill-rose-400 text-rose-400 animate-pulse' : 'text-slate-500'}`} />
+                <span>{isUrgent ? 'URGENT' : 'Normal Priority'}</span>
+              </button>
+            </div>
+
+            {/* 3. Received vs Not Received Marking */}
+            <div>
+              <label className="block text-xs font-semibold text-slate-300 mb-1 flex items-center gap-1.5">
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Receiving Status</span>
+              </label>
+              <button
+                type="button"
+                onClick={() => setOrderStatus(orderStatus === 'Received' ? 'Not Received' : 'Received')}
+                className={`w-full py-1.5 px-3 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer border ${
+                  orderStatus === 'Received'
+                    ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/50 shadow-xs'
+                    : 'bg-amber-500/15 text-amber-300 border-amber-500/30'
+                }`}
+              >
+                {orderStatus === 'Received' ? (
+                  <>
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>Received</span>
+                  </>
+                ) : (
+                  <>
+                    <Clock className="w-3.5 h-3.5 text-amber-400" />
+                    <span>Not Received</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+
+          {/* MULTIPLE STOCK & DIE QUEUE SUMMARY (shows when items are added) */}
           {stockQueue.length > 0 && (
             <div className="p-4 rounded-xl bg-slate-950 border border-amber-500/40 space-y-2.5">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-bold text-amber-400 flex items-center gap-1.5">
                   <PackagePlus className="w-4 h-4" />
-                  <span>Stock Items Added to this Job Order ({stockQueue.length})</span>
+                  <span>Items Added to this Order Queue ({stockQueue.length})</span>
                 </span>
                 <span className="text-[11px] font-mono text-slate-400">
-                  Total Qty: {stockQueue.reduce((acc, i) => acc + i.quantity, 0).toLocaleString()}
+                  Total Items: {stockQueue.length}
                 </span>
               </div>
 
@@ -367,12 +617,30 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
                       <div className="flex items-center gap-2">
                         <span className="font-mono text-amber-300 font-bold">#{idx + 1}</span>
                         <span className="font-semibold text-white truncate">{item.stockType}</span>
-                        <span className="px-1.5 py-0.2 rounded text-[10px] bg-slate-800 text-slate-300">
-                          {item.isPrinted ? `Printed (${item.pressName})` : 'Non-Printed'}
+                        {item.category === 'Die' ? (
+                          <span className="px-1.5 py-0.2 rounded text-[10px] bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                            Die Tool
+                          </span>
+                        ) : (
+                          <span className="px-1.5 py-0.2 rounded text-[10px] bg-slate-800 text-slate-300">
+                            {item.isPrinted ? `Printed (${item.pressName})` : 'Non-Printed'}
+                          </span>
+                        )}
+                        {item.isUrgent && (
+                          <span className="px-1.5 py-0.2 rounded text-[10px] bg-rose-500/20 text-rose-300 border border-rose-500/30 font-bold">
+                            URGENT
+                          </span>
+                        )}
+                        <span className={`px-1.5 py-0.2 rounded text-[10px] ${
+                          item.status === 'Received' ? 'bg-emerald-500/20 text-emerald-300' : 'bg-amber-500/20 text-amber-300'
+                        }`}>
+                          {item.status || 'Not Received'}
                         </span>
                       </div>
                       <div className="text-[11px] text-slate-400 font-mono mt-0.5">
-                        Size: {item.jobSize} · From: {item.receivingFrom} · Qty: <strong className="text-white">{item.quantity.toLocaleString()}</strong>
+                        {item.category === 'Die'
+                          ? `Job: ${item.jobName || 'Unassigned'} · Maker: ${item.dieMaker} · Punch: ${item.punchType} · Qty: ${item.quantity}`
+                          : `Size: ${item.jobSize} · From: ${item.receivingFrom} · Qty: ${item.quantity.toLocaleString()}`}
                       </div>
                     </div>
 
@@ -382,11 +650,11 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
                         setDeleteConfirmTarget({
                           category: 'stock_item',
                           idOrName: item.id,
-                          label: `${item.stockType} (${item.quantity.toLocaleString()} units)`,
+                          label: `${item.stockType} (${item.quantity} units)`,
                         })
                       }
                       className="p-1.5 text-slate-500 hover:text-rose-400 hover:bg-slate-800 rounded transition-colors cursor-pointer"
-                      title="Remove this stock item"
+                      title="Remove this item"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
                     </button>
@@ -396,15 +664,282 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
             </div>
           )}
 
-          {/* Section Divider: Configure Stock Item */}
-          <div className="flex items-center justify-between pb-1 border-b border-slate-800">
-            <span className="text-xs font-bold text-white uppercase font-mono tracking-wide">
-              {stockQueue.length > 0 ? '+ Configure Additional Stock Item' : 'Stock Details'}
-            </span>
-            <span className="text-[11px] text-slate-400">Fill details and add to order</span>
-          </div>
+          {/* ========================================================= */}
+          {/* TAB 2: DIE TOOLING ORDER FORM */}
+          {/* ========================================================= */}
+          {activeCategory === 'Die' && (
+            <div className="space-y-4 animate-in fade-in duration-150">
+              <div className="flex items-center justify-between pb-1 border-b border-slate-800">
+                <span className="text-xs font-bold text-purple-400 uppercase font-mono tracking-wide flex items-center gap-1.5">
+                  <Scissors className="w-3.5 h-3.5" />
+                  <span>Die Details & Tooling Specifications</span>
+                </span>
+                <span className="text-[11px] text-slate-400">Fill job, die maker, and punch type</span>
+              </div>
 
-          {/* 1. STOCK TYPE (Search, Select, and Type/Save) */}
+              {/* 1. Job Name (Adding and Selection) */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-200 mb-1.5">
+                  Job Name <span className="text-amber-400">*</span>
+                </label>
+                <input
+                  type="text"
+                  required
+                  list="die-job-names-datalist"
+                  value={dieJobName}
+                  onChange={(e) => setDieJobName(e.target.value)}
+                  placeholder="Select from existing jobs or type custom job name..."
+                  className="w-full px-3.5 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-purple-500"
+                />
+                <datalist id="die-job-names-datalist">
+                  {availableJobs.map((j) => (
+                    <option key={j.id} value={j.jobName}>
+                      {j.jobType} · {j.jobPlacement}
+                    </option>
+                  ))}
+                </datalist>
+                <p className="text-[11px] text-slate-500 mt-1">
+                  Type any new job name or pick from existing factory jobs in queue
+                </p>
+              </div>
+
+              {/* 2. Job Type (Adding and Selection) */}
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="block text-xs font-semibold text-slate-200">
+                    Job Type <span className="text-amber-400">*</span>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setIsAddingNewJobType(!isAddingNewJobType)}
+                    className="text-[11px] text-purple-400 hover:text-purple-300 font-medium flex items-center gap-1 cursor-pointer"
+                  >
+                    <Plus className="w-3 h-3" />
+                    <span>{isAddingNewJobType ? 'Select from list' : '+ Add New Job Type'}</span>
+                  </button>
+                </div>
+
+                {isAddingNewJobType && (
+                  <div className="p-3 bg-slate-950 border border-purple-500/40 rounded-xl space-y-2 mb-2">
+                    <span className="text-[11px] text-purple-300 font-medium">Type custom Job Type to add:</span>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={newJobTypeInput}
+                        onChange={(e) => setNewJobTypeInput(e.target.value)}
+                        placeholder="e.g. 5-Ply Offset Laminated Box..."
+                        className="flex-1 px-3 py-1.5 bg-slate-900 border border-slate-800 rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:border-purple-500"
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            handleSaveJobType();
+                          }
+                        }}
+                      />
+                      <button
+                        type="button"
+                        onClick={handleSaveJobType}
+                        className="px-3 py-1.5 bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold rounded-lg transition-colors cursor-pointer"
+                      >
+                        Add & Select
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                <select
+                  value={dieJobType}
+                  onChange={(e) => setDieJobType(e.target.value)}
+                  className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-xs text-white focus:outline-none focus:border-purple-500 cursor-pointer"
+                >
+                  {availableJobTypes.map((t) => (
+                    <option key={t} value={t}>{t}</option>
+                  ))}
+                  {/* If custom is entered and not in list */}
+                  {dieJobType && !availableJobTypes.includes(dieJobType) && (
+                    <option value={dieJobType}>{dieJobType}</option>
+                  )}
+                  {availableJobTypes.length === 0 && !dieJobType && (
+                    <option value="General Corrugation">General Corrugation</option>
+                  )}
+                </select>
+              </div>
+
+              {/* 3. Die Maker (Adding and Selection) */}
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="block text-xs font-semibold text-slate-200">
+                    Die Maker <span className="text-amber-400">*</span>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setIsAddingNewDieMaker(!isAddingNewDieMaker)}
+                    className="text-[11px] text-purple-400 hover:text-purple-300 font-medium flex items-center gap-1 cursor-pointer"
+                  >
+                    <Plus className="w-3 h-3" />
+                    <span>{isAddingNewDieMaker ? 'Select from list' : '+ Add New Die Maker'}</span>
+                  </button>
+                </div>
+
+                {isAddingNewDieMaker && (
+                  <div className="p-3 bg-slate-950 border border-purple-500/40 rounded-xl space-y-2 mb-2">
+                    <span className="text-[11px] text-purple-300 font-medium">Type custom Die Maker vendor name:</span>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={newDieMakerInput}
+                        onChange={(e) => setNewDieMakerInput(e.target.value)}
+                        placeholder="e.g. Apex Laser Dies, Modern Tooling..."
+                        className="flex-1 px-3 py-1.5 bg-slate-900 border border-slate-800 rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:border-purple-500"
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            handleSaveDieMaker();
+                          }
+                        }}
+                      />
+                      <button
+                        type="button"
+                        onClick={handleSaveDieMaker}
+                        className="px-3 py-1.5 bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold rounded-lg transition-colors cursor-pointer"
+                      >
+                        Add & Select
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                <select
+                  value={dieMaker}
+                  onChange={(e) => setDieMaker(e.target.value)}
+                  className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-xs text-white focus:outline-none focus:border-purple-500 cursor-pointer"
+                >
+                  {availableDieMakers.map((m) => (
+                    <option key={m} value={m}>{m}</option>
+                  ))}
+                  {dieMaker && !availableDieMakers.includes(dieMaker) && (
+                    <option value={dieMaker}>{dieMaker}</option>
+                  )}
+                </select>
+              </div>
+
+              {/* 4. Punch Type (Adding and Selection) */}
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="block text-xs font-semibold text-slate-200">
+                    Punch Type <span className="text-amber-400">*</span>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setIsAddingNewPunchType(!isAddingNewPunchType)}
+                    className="text-[11px] text-purple-400 hover:text-purple-300 font-medium flex items-center gap-1 cursor-pointer"
+                  >
+                    <Plus className="w-3 h-3" />
+                    <span>{isAddingNewPunchType ? 'Select from list' : '+ Add New Punch Type'}</span>
+                  </button>
+                </div>
+
+                {isAddingNewPunchType && (
+                  <div className="p-3 bg-slate-950 border border-purple-500/40 rounded-xl space-y-2 mb-2">
+                    <span className="text-[11px] text-purple-300 font-medium">Type custom Punch Type:</span>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={newPunchTypeInput}
+                        onChange={(e) => setNewPunchTypeInput(e.target.value)}
+                        placeholder="e.g. Rotary Die Punch, Flatbed Stripping..."
+                        className="flex-1 px-3 py-1.5 bg-slate-900 border border-slate-800 rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:border-purple-500"
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            handleSavePunchType();
+                          }
+                        }}
+                      />
+                      <button
+                        type="button"
+                        onClick={handleSavePunchType}
+                        className="px-3 py-1.5 bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold rounded-lg transition-colors cursor-pointer"
+                      >
+                        Add & Select
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                <select
+                  value={punchType}
+                  onChange={(e) => setPunchType(e.target.value)}
+                  className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-xs text-white focus:outline-none focus:border-purple-500 cursor-pointer"
+                >
+                  {availablePunchTypes.map((p) => (
+                    <option key={p} value={p}>{p}</option>
+                  ))}
+                  {punchType && !availablePunchTypes.includes(punchType) && (
+                    <option value={punchType}>{punchType}</option>
+                  )}
+                </select>
+              </div>
+
+              {/* Quantity & Notes */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-200 mb-1">
+                    Quantity (Dies)
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    value={dieQuantity}
+                    onChange={(e) => setDieQuantity(Number(e.target.value))}
+                    className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-xs text-white font-mono focus:outline-none focus:border-purple-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-slate-300 mb-1">
+                    Die Tool Notes (Optional)
+                  </label>
+                  <input
+                    type="text"
+                    value={dieNotes}
+                    onChange={(e) => setDieNotes(e.target.value)}
+                    placeholder="e.g. 23.8 mm rule height, serrated cut..."
+                    className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-xs text-white focus:outline-none focus:border-purple-500"
+                  />
+                </div>
+              </div>
+
+              {/* Add to Queue Button */}
+              <div className="pt-2">
+                <button
+                  type="button"
+                  onClick={handleAddDieToQueue}
+                  className="w-full py-2.5 px-4 bg-purple-950/60 hover:bg-purple-900/60 active:bg-purple-900 text-purple-300 border border-purple-800/80 rounded-xl text-xs font-semibold flex items-center justify-center gap-2 transition-colors cursor-pointer"
+                >
+                  <PackagePlus className="w-4 h-4 text-purple-400" />
+                  <span>+ Add Die Order to Queue</span>
+                </button>
+              </div>
+
+            </div>
+          )}
+
+          {/* ========================================================= */}
+          {/* TAB 1: RAW PAPER / BOARD STOCK FORM */}
+          {/* ========================================================= */}
+          {activeCategory === 'Stock' && (
+            <div className="space-y-4 animate-in fade-in duration-150">
+
+              {/* Section Divider: Configure Stock Item */}
+              <div className="flex items-center justify-between pb-1 border-b border-slate-800">
+                <span className="text-xs font-bold text-white uppercase font-mono tracking-wide">
+                  {stockQueue.length > 0 ? '+ Configure Additional Stock Item' : 'Stock Details'}
+                </span>
+                <span className="text-[11px] text-slate-400">Fill details and add to order</span>
+              </div>
+
+              {/* 1. STOCK TYPE (Search, Select, and Type/Save) */}
           <div className="relative">
             <div className="flex items-center justify-between mb-1.5">
               <label className="block text-xs font-semibold text-slate-200">
@@ -918,6 +1453,9 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
           </div>
 
         </div>
+      )}
+
+    </div>
 
         {/* Modal Footer */}
         <div className="px-6 py-4 border-t border-slate-800 bg-slate-950/80 flex items-center justify-between gap-3 shrink-0">

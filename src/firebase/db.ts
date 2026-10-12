@@ -18,7 +18,9 @@ import {
   JobStatus,
   INITIAL_STOCK_TYPES, 
   COMMON_SUPPLIERS, 
-  INITIAL_PRESS_NAMES 
+  INITIAL_PRESS_NAMES,
+  INITIAL_DIE_MAKERS,
+  INITIAL_PUNCH_TYPES
 } from '../types/job';
 
 export enum OperationType {
@@ -53,6 +55,8 @@ export interface FactorySettings {
   stockTypes: string[];
   suppliers: string[];
   presses: string[];
+  dieMakers: string[];
+  punchTypes: string[];
 }
 
 const JOBS_COLLECTION = 'jobs';
@@ -194,6 +198,8 @@ export function getPersistedSettings(): FactorySettings {
     stockTypes: INITIAL_STOCK_TYPES,
     suppliers: COMMON_SUPPLIERS,
     presses: INITIAL_PRESS_NAMES,
+    dieMakers: INITIAL_DIE_MAKERS,
+    punchTypes: INITIAL_PUNCH_TYPES,
   };
 
   if (typeof window === 'undefined') return defaultSettings;
@@ -217,6 +223,14 @@ export function getPersistedSettings(): FactorySettings {
         Array.isArray(parsed.presses) && parsed.presses.length > 0
           ? parsed.presses
           : INITIAL_PRESS_NAMES,
+      dieMakers:
+        Array.isArray(parsed.dieMakers) && parsed.dieMakers.length > 0
+          ? parsed.dieMakers
+          : INITIAL_DIE_MAKERS,
+      punchTypes:
+        Array.isArray(parsed.punchTypes) && parsed.punchTypes.length > 0
+          ? parsed.punchTypes
+          : INITIAL_PUNCH_TYPES,
     };
   } catch {
     return defaultSettings;
@@ -291,6 +305,10 @@ export function subscribeToJobs(
           hasInventory: Boolean(data.hasInventory),
           inventoryCount: data.inventoryCount || 0,
           inventoryOrderId: data.inventoryOrderId || undefined,
+          boardSize: data.boardSize || undefined,
+          jobSize: data.jobSize || undefined,
+          pressName: data.pressName || undefined,
+          isUrgent: Boolean(data.isUrgent),
         });
       });
 
@@ -344,7 +362,6 @@ export async function addJobToFirestore(job: CorrugationJob): Promise<void> {
   savePersistedJobs(updatedJobs);
 
   // 3. Sync to Firestore
-  const path = `${JOBS_COLLECTION}/${job.id}`;
   try {
     await setDoc(doc(db, JOBS_COLLECTION, job.id), {
       jobName: job.jobName,
@@ -356,8 +373,12 @@ export async function addJobToFirestore(job: CorrugationJob): Promise<void> {
       hasInventory: Boolean(job.hasInventory),
       inventoryCount: job.inventoryCount || 0,
       inventoryOrderId: job.inventoryOrderId || null,
+      boardSize: job.boardSize || null,
+      jobSize: job.jobSize || null,
+      pressName: job.pressName || null,
+      isUrgent: Boolean(job.isUrgent),
       updatedAt: new Date().toISOString(),
-    });
+    }, { merge: true });
   } catch (err) {
     console.warn(`Firestore setDoc for job ${job.id} failed, but job is saved locally:`, err);
   }
@@ -370,14 +391,31 @@ export async function updateJobStatusInFirestore(jobId: string, status: JobStatu
   savePersistedJobs(updatedJobs);
 
   // 2. Sync to Firestore
-  const path = `${JOBS_COLLECTION}/${jobId}`;
   try {
-    await updateDoc(doc(db, JOBS_COLLECTION, jobId), {
+    await setDoc(doc(db, JOBS_COLLECTION, jobId), {
       status,
       updatedAt: new Date().toISOString(),
-    });
+    }, { merge: true });
   } catch (err) {
-    console.warn(`Firestore updateDoc for job ${jobId} failed, but status is saved locally:`, err);
+    console.warn(`Firestore setDoc for job ${jobId} failed, but status is saved locally:`, err);
+  }
+}
+
+export async function updateJobDetailsInFirestore(
+  jobId: string,
+  updates: Partial<CorrugationJob>
+): Promise<void> {
+  // 1. Immediately update in local persistent storage
+  const currentJobs = getPersistedJobs();
+  const updatedJobs = currentJobs.map((j) => (j.id === jobId ? { ...j, ...updates } : j));
+  savePersistedJobs(updatedJobs);
+
+  // 2. Sync to Firestore
+  try {
+    const payload: any = { ...updates, updatedAt: new Date().toISOString() };
+    await setDoc(doc(db, JOBS_COLLECTION, jobId), payload, { merge: true });
+  } catch (err) {
+    console.warn(`Firestore setDoc for job ${jobId} failed, but saved locally:`, err);
   }
 }
 
@@ -472,9 +510,14 @@ export function subscribeToInventory(
           quantity: Number(data.quantity) || 0,
           jobId: data.jobId || undefined,
           jobName: data.jobName || undefined,
+          jobType: data.jobType || undefined,
           orderedAt: data.orderedAt || new Date().toISOString(),
-          status: data.status || 'Received',
+          status: data.status || 'Not Received',
+          isUrgent: Boolean(data.isUrgent),
           notes: data.notes || '',
+          category: data.category || 'Stock',
+          dieMaker: data.dieMaker || undefined,
+          punchType: data.punchType || undefined,
         });
       });
 
@@ -580,8 +623,26 @@ export async function deleteInventoryItemFromFirestore(itemId: string): Promise<
   }
 }
 
+export async function updateInventoryItemInFirestore(
+  itemId: string,
+  updates: Partial<InventoryItem>
+): Promise<void> {
+  // 1. Immediately update in local persistent storage
+  const currentInv = getPersistedInventory();
+  const updatedInv = currentInv.map((item) => (item.id === itemId ? { ...item, ...updates } : item));
+  savePersistedInventory(updatedInv);
+
+  // 2. Sync to Firestore
+  try {
+    const payload: any = { ...updates, updatedAt: new Date().toISOString() };
+    await setDoc(doc(db, INVENTORY_COLLECTION, itemId), payload, { merge: true });
+  } catch (err) {
+    console.warn(`Firestore setDoc for inventory ${itemId} failed, but saved locally:`, err);
+  }
+}
+
 // ----------------------------------------------------
-// 3. SETTINGS & DROPDOWNS (Job Types, Stock Types, Suppliers, Presses)
+// 3. SETTINGS & DROPDOWNS (Job Types, Stock Types, Suppliers, Presses, Die Makers, Punch Types)
 // ----------------------------------------------------
 
 export function subscribeToFactorySettings(
@@ -624,6 +685,14 @@ export function subscribeToFactorySettings(
             Array.isArray(data.presses) && data.presses.length > 0
               ? data.presses
               : local.presses,
+          dieMakers:
+            Array.isArray(data.dieMakers) && data.dieMakers.length > 0
+              ? data.dieMakers
+              : local.dieMakers,
+          punchTypes:
+            Array.isArray(data.punchTypes) && data.punchTypes.length > 0
+              ? data.punchTypes
+              : local.punchTypes,
         };
 
         savePersistedSettings(newSettings);
@@ -636,6 +705,8 @@ export function subscribeToFactorySettings(
           stockTypes: current.stockTypes,
           suppliers: current.suppliers,
           presses: current.presses,
+          dieMakers: current.dieMakers,
+          punchTypes: current.punchTypes,
           updatedAt: new Date().toISOString(),
         }).catch(() => {});
       }
@@ -678,6 +749,8 @@ export async function addCustomOptionToFirestore(
         stockTypes: data.stockTypes || INITIAL_STOCK_TYPES,
         suppliers: data.suppliers || COMMON_SUPPLIERS,
         presses: data.presses || INITIAL_PRESS_NAMES,
+        dieMakers: data.dieMakers || INITIAL_DIE_MAKERS,
+        punchTypes: data.punchTypes || INITIAL_PUNCH_TYPES,
       };
     }
 

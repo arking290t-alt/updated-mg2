@@ -62,9 +62,6 @@ export const ExistingInventoryView: React.FC<ExistingInventoryViewProps> = ({
             <span className="text-xs font-mono text-emerald-400 uppercase tracking-wide">Warehouse Registry</span>
           </div>
           <h2 className="text-xl font-bold text-white tracking-tight">Existing Inventory</h2>
-          <p className="text-xs text-slate-400 mt-1">
-            Tracked corrugation stock types, job sheet dimensions, printing specifications, and quantities
-          </p>
         </div>
 
         <button
