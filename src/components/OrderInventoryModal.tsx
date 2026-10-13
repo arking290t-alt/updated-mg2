@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { 
   X, 
   Plus, 
@@ -76,16 +76,44 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
   // Primary Order Category: Stock vs Die
   const [activeCategory, setActiveCategory] = useState<'Stock' | 'Die'>('Stock');
 
-  // Common Date, Urgent, and Status Marking
+  // Common Order Date
   const [orderDate, setOrderDate] = useState<string>(todayIso);
-  const [isUrgent, setIsUrgent] = useState<boolean>(false);
-  const [orderStatus, setOrderStatus] = useState<'Not Received' | 'Received'>('Not Received');
 
-  // DIE ORDER SPECIFIC STATE
+  // DIE & JOB SPECIFIC STATE
+  const [selectedJobId, setSelectedJobId] = useState<string>(targetJob ? targetJob.id : '');
   const [dieJobName, setDieJobName] = useState<string>(targetJob ? targetJob.jobName : '');
   const [dieJobType, setDieJobType] = useState<string>(targetJob ? targetJob.jobType : (availableJobTypes[0] || 'General Corrugation'));
   const [isAddingNewJobType, setIsAddingNewJobType] = useState(false);
   const [newJobTypeInput, setNewJobTypeInput] = useState('');
+
+  // Sync state when targetJob changes or modal opens
+  useEffect(() => {
+    if (targetJob) {
+      setSelectedJobId(targetJob.id);
+      setDieJobName(targetJob.jobName);
+      setDieJobType(targetJob.jobType || availableJobTypes[0] || 'General Corrugation');
+    } else {
+      setSelectedJobId('');
+      setDieJobName('');
+      setDieJobType(availableJobTypes[0] || 'General Corrugation');
+    }
+  }, [targetJob, isOpen, availableJobTypes]);
+
+  const handleSelectExistingJob = (jobId: string) => {
+    setSelectedJobId(jobId);
+    if (!jobId || jobId === 'custom') {
+      setDieJobName('');
+      return;
+    }
+    const found = availableJobs.find((j) => j.id === jobId);
+    if (found) {
+      setDieJobName(found.jobName);
+      setDieJobType(found.jobType || availableJobTypes[0] || 'General Corrugation');
+      if (found.jobSize) {
+        setJobSize(found.jobSize);
+      }
+    }
+  };
 
   const [dieMaker, setDieMaker] = useState<string>(availableDieMakers[0] || 'Apex Laser Dies');
   const [isAddingNewDieMaker, setIsAddingNewDieMaker] = useState(false);
@@ -281,6 +309,8 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
   const handleAddCurrentStockToQueue = () => {
     if (!validateCurrentItem()) return;
 
+    const activeJob = targetJob || (selectedJobId && selectedJobId !== 'custom' ? availableJobs.find((j) => j.id === selectedJobId) : undefined);
+
     const newEntry: StockItemEntry = {
       id: `entry-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
       category: 'Stock',
@@ -292,10 +322,10 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
       quantity: Number(quantity),
       notes: notes.trim() || undefined,
       orderedAt: `${orderDate} 12:00`,
-      status: orderStatus,
-      isUrgent: isUrgent,
-      jobId: targetJob ? targetJob.id : undefined,
-      jobName: targetJob ? targetJob.jobName : undefined,
+      status: 'Not Received',
+      isUrgent: activeJob ? Boolean(activeJob.isUrgent) : false,
+      jobId: activeJob ? activeJob.id : undefined,
+      jobName: activeJob ? activeJob.jobName : undefined,
     };
 
     setStockQueue((prev) => [...prev, newEntry]);
@@ -321,6 +351,8 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
       return;
     }
 
+    const activeJob = targetJob || (selectedJobId && selectedJobId !== 'custom' ? availableJobs.find((j) => j.id === selectedJobId) : undefined);
+
     const newEntry: StockItemEntry = {
       id: `die-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
       category: 'Die',
@@ -329,13 +361,14 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
       receivingFrom: dieMaker.trim(),
       dieMaker: dieMaker.trim(),
       punchType: punchType.trim(),
+      jobId: activeJob ? activeJob.id : undefined,
       jobName: dieJobName.trim(),
       jobType: dieJobType.trim(),
       isPrinted: false,
       quantity: Number(dieQuantity) || 1,
       orderedAt: `${orderDate} 12:00`,
-      status: orderStatus,
-      isUrgent: isUrgent,
+      status: 'Not Received',
+      isUrgent: activeJob ? Boolean(activeJob.isUrgent) : false,
       notes: dieNotes.trim() || undefined,
     };
 
@@ -380,6 +413,8 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
 
     let allItemsToSubmit: StockItemEntry[] = [...stockQueue];
 
+    const activeJob = targetJob || (selectedJobId && selectedJobId !== 'custom' ? availableJobs.find((j) => j.id === selectedJobId) : undefined);
+
     // If on Stock tab and has filled in current form fields, validate and include it
     if (activeCategory === 'Stock' && stockType.trim()) {
       if (!validateCurrentItem()) return;
@@ -394,10 +429,10 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
         quantity: Number(quantity),
         notes: notes.trim() || undefined,
         orderedAt: `${orderDate} 12:00`,
-        status: orderStatus,
-        isUrgent: isUrgent,
-        jobId: targetJob ? targetJob.id : undefined,
-        jobName: targetJob ? targetJob.jobName : undefined,
+        status: 'Not Received',
+        isUrgent: activeJob ? Boolean(activeJob.isUrgent) : false,
+        jobId: activeJob ? activeJob.id : undefined,
+        jobName: activeJob ? activeJob.jobName : undefined,
       });
     } else if (activeCategory === 'Die' && dieJobName.trim()) {
       allItemsToSubmit.push({
@@ -408,13 +443,14 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
         receivingFrom: dieMaker.trim(),
         dieMaker: dieMaker.trim(),
         punchType: punchType.trim(),
+        jobId: activeJob ? activeJob.id : undefined,
         jobName: dieJobName.trim(),
         jobType: dieJobType.trim(),
         isPrinted: false,
         quantity: Number(dieQuantity) || 1,
         orderedAt: `${orderDate} 12:00`,
-        status: orderStatus,
-        isUrgent: isUrgent,
+        status: 'Not Received',
+        isUrgent: activeJob ? Boolean(activeJob.isUrgent) : false,
         notes: dieNotes.trim() || undefined,
       });
     }
@@ -438,13 +474,13 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
       isPrinted: item.isPrinted,
       pressName: item.pressName,
       quantity: item.quantity,
-      jobId: item.jobId || (targetJob ? targetJob.id : undefined),
-      jobName: item.jobName || (targetJob ? targetJob.jobName : undefined),
+      jobId: item.jobId || (activeJob ? activeJob.id : undefined),
+      jobName: item.jobName || (activeJob ? activeJob.jobName : undefined),
       jobType: item.jobType,
       notes: item.notes,
       orderedAt: item.orderedAt || `${orderDate} 12:00`,
-      status: item.status || orderStatus,
-      isUrgent: item.isUrgent !== undefined ? item.isUrgent : isUrgent,
+      status: item.status || 'Not Received',
+      isUrgent: item.isUrgent !== undefined ? item.isUrgent : (activeJob ? Boolean(activeJob.isUrgent) : false),
     }));
 
     onSaveInventoryOrders(payload as any);
@@ -527,71 +563,19 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
         {/* Form Body */}
         <div className="p-6 space-y-5 overflow-y-auto flex-1">
           
-          {/* COMMON DATE, PRIORITY & STATUS CONTROLS */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 p-3.5 bg-slate-950 rounded-xl border border-slate-800">
-            {/* 1. Date Option */}
-            <div>
-              <label className="block text-xs font-semibold text-slate-300 mb-1 flex items-center gap-1.5">
-                <Calendar className="w-3.5 h-3.5 text-amber-400" />
-                <span>Order Date <span className="text-amber-400">*</span></span>
-              </label>
-              <input
-                type="date"
-                required
-                value={orderDate}
-                onChange={(e) => setOrderDate(e.target.value)}
-                className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-800 rounded-lg text-xs text-white [color-scheme:dark] focus:outline-none focus:border-amber-500"
-              />
-            </div>
-
-            {/* 2. Urgent Priority Toggle */}
-            <div>
-              <label className="block text-xs font-semibold text-slate-300 mb-1 flex items-center gap-1.5">
-                <Flame className="w-3.5 h-3.5 text-rose-400" />
-                <span>Priority Flag</span>
-              </label>
-              <button
-                type="button"
-                onClick={() => setIsUrgent(!isUrgent)}
-                className={`w-full py-1.5 px-3 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer border ${
-                  isUrgent
-                    ? 'bg-rose-500/20 text-rose-400 border-rose-500/50 shadow-xs'
-                    : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200'
-                }`}
-              >
-                <Flame className={`w-3.5 h-3.5 ${isUrgent ? 'fill-rose-400 text-rose-400 animate-pulse' : 'text-slate-500'}`} />
-                <span>{isUrgent ? 'URGENT' : 'Normal Priority'}</span>
-              </button>
-            </div>
-
-            {/* 3. Received vs Not Received Marking */}
-            <div>
-              <label className="block text-xs font-semibold text-slate-300 mb-1 flex items-center gap-1.5">
-                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-                <span>Receiving Status</span>
-              </label>
-              <button
-                type="button"
-                onClick={() => setOrderStatus(orderStatus === 'Received' ? 'Not Received' : 'Received')}
-                className={`w-full py-1.5 px-3 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer border ${
-                  orderStatus === 'Received'
-                    ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/50 shadow-xs'
-                    : 'bg-amber-500/15 text-amber-300 border-amber-500/30'
-                }`}
-              >
-                {orderStatus === 'Received' ? (
-                  <>
-                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-                    <span>Received</span>
-                  </>
-                ) : (
-                  <>
-                    <Clock className="w-3.5 h-3.5 text-amber-400" />
-                    <span>Not Received</span>
-                  </>
-                )}
-              </button>
-            </div>
+          {/* ORDER DATE */}
+          <div className="flex items-center gap-3 p-3 bg-slate-950 rounded-xl border border-slate-800">
+            <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5 shrink-0">
+              <Calendar className="w-3.5 h-3.5 text-amber-400" />
+              <span>Order Date:</span>
+            </label>
+            <input
+              type="date"
+              required
+              value={orderDate}
+              onChange={(e) => setOrderDate(e.target.value)}
+              className="px-3 py-1.5 bg-slate-900 border border-slate-800 rounded-lg text-xs text-white [color-scheme:dark] focus:outline-none focus:border-amber-500"
+            />
           </div>
 
           {/* MULTIPLE STOCK & DIE QUEUE SUMMARY (shows when items are added) */}
@@ -640,7 +624,7 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
                       <div className="text-[11px] text-slate-400 font-mono mt-0.5">
                         {item.category === 'Die'
                           ? `Job: ${item.jobName || 'Unassigned'} · Maker: ${item.dieMaker} · Punch: ${item.punchType} · Qty: ${item.quantity}`
-                          : `Size: ${item.jobSize} · From: ${item.receivingFrom} · Qty: ${item.quantity.toLocaleString()}`}
+                          : `Board Size: ${item.jobSize} · From: ${item.receivingFrom} · Qty: ${item.quantity.toLocaleString()}`}
                       </div>
                     </div>
 
@@ -672,63 +656,81 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
               <div className="flex items-center justify-between pb-1 border-b border-slate-800">
                 <span className="text-xs font-bold text-purple-400 uppercase font-mono tracking-wide flex items-center gap-1.5">
                   <Scissors className="w-3.5 h-3.5" />
-                  <span>Die Details & Tooling Specifications</span>
+                  <span>Die Details</span>
                 </span>
-                <span className="text-[11px] text-slate-400">Fill job, die maker, and punch type</span>
               </div>
 
-              {/* 1. Job Name (Adding and Selection) */}
-              <div>
-                <label className="block text-xs font-semibold text-slate-200 mb-1.5">
-                  Job Name <span className="text-amber-400">*</span>
-                </label>
-                <input
-                  type="text"
-                  required
-                  list="die-job-names-datalist"
-                  value={dieJobName}
-                  onChange={(e) => setDieJobName(e.target.value)}
-                  placeholder="Select from existing jobs or type custom job name..."
-                  className="w-full px-3.5 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-purple-500"
-                />
-                <datalist id="die-job-names-datalist">
-                  {availableJobs.map((j) => (
-                    <option key={j.id} value={j.jobName}>
-                      {j.jobType} · {j.jobPlacement}
-                    </option>
-                  ))}
-                </datalist>
-                <p className="text-[11px] text-slate-500 mt-1">
-                  Type any new job name or pick from existing factory jobs in queue
-                </p>
-              </div>
+              {/* Job Association & Auto-Fill Details */}
+              <div className="space-y-3 p-3 bg-slate-950 border border-slate-800 rounded-xl">
+                {targetJob ? (
+                  <div className="flex items-center justify-between pb-2 border-b border-slate-800/80">
+                    <div>
+                      <span className="text-[10px] text-slate-400 uppercase font-mono">Job for Die Order:</span>
+                      <div className="text-xs font-bold text-white mt-0.5">
+                        {targetJob.jobName}
+                      </div>
+                    </div>
+                    <span className="text-[10px] font-mono text-emerald-400 font-semibold bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
+                      Auto-filled for Job
+                    </span>
+                  </div>
+                ) : (
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-200 mb-1">
+                      Select Existing Job (Auto-fills Details)
+                    </label>
+                    <select
+                      value={selectedJobId}
+                      onChange={(e) => handleSelectExistingJob(e.target.value)}
+                      className="w-full px-3 py-2 bg-slate-900 border border-slate-800 rounded-xl text-xs text-white focus:outline-none focus:border-purple-500 cursor-pointer"
+                    >
+                      <option value="">-- Select Existing Job --</option>
+                      {availableJobs.map((j) => (
+                        <option key={j.id} value={j.id}>
+                          {j.jobName} ({j.jobType})
+                        </option>
+                      ))}
+                      <option value="custom">+ Custom / New Job Name</option>
+                    </select>
+                  </div>
+                )}
 
-              {/* 2. Job Type (Adding and Selection) */}
-              <div>
-                <div className="flex items-center justify-between mb-1.5">
-                  <label className="block text-xs font-semibold text-slate-200">
-                    Job Type <span className="text-amber-400">*</span>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-200 mb-1">
+                    Job Name <span className="text-amber-400">*</span>
                   </label>
-                  <button
-                    type="button"
-                    onClick={() => setIsAddingNewJobType(!isAddingNewJobType)}
-                    className="text-[11px] text-purple-400 hover:text-purple-300 font-medium flex items-center gap-1 cursor-pointer"
-                  >
-                    <Plus className="w-3 h-3" />
-                    <span>{isAddingNewJobType ? 'Select from list' : '+ Add New Job Type'}</span>
-                  </button>
+                  <input
+                    type="text"
+                    required
+                    value={dieJobName}
+                    onChange={(e) => setDieJobName(e.target.value)}
+                    placeholder="Job Name..."
+                    className="w-full px-3 py-2 bg-slate-900 border border-slate-800 rounded-xl text-xs text-white focus:outline-none focus:border-purple-500"
+                  />
                 </div>
 
-                {isAddingNewJobType && (
-                  <div className="p-3 bg-slate-950 border border-purple-500/40 rounded-xl space-y-2 mb-2">
-                    <span className="text-[11px] text-purple-300 font-medium">Type custom Job Type to add:</span>
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-xs font-semibold text-slate-200">
+                      Job Type <span className="text-amber-400">*</span>
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => setIsAddingNewJobType(!isAddingNewJobType)}
+                      className="text-[11px] text-purple-400 hover:text-purple-300 font-medium cursor-pointer"
+                    >
+                      {isAddingNewJobType ? 'Select from list' : '+ Add Job Type'}
+                    </button>
+                  </div>
+
+                  {isAddingNewJobType ? (
                     <div className="flex gap-2">
                       <input
                         type="text"
                         value={newJobTypeInput}
                         onChange={(e) => setNewJobTypeInput(e.target.value)}
-                        placeholder="e.g. 5-Ply Offset Laminated Box..."
-                        className="flex-1 px-3 py-1.5 bg-slate-900 border border-slate-800 rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:border-purple-500"
+                        placeholder="Type custom Job Type..."
+                        className="flex-1 px-3 py-2 bg-slate-900 border border-slate-800 rounded-xl text-xs text-white focus:outline-none focus:border-purple-500"
                         onKeyDown={(e) => {
                           if (e.key === 'Enter') {
                             e.preventDefault();
@@ -739,30 +741,29 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
                       <button
                         type="button"
                         onClick={handleSaveJobType}
-                        className="px-3 py-1.5 bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold rounded-lg transition-colors cursor-pointer"
+                        className="px-3 py-2 bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold rounded-xl cursor-pointer"
                       >
-                        Add & Select
+                        Add
                       </button>
                     </div>
-                  </div>
-                )}
-
-                <select
-                  value={dieJobType}
-                  onChange={(e) => setDieJobType(e.target.value)}
-                  className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-xs text-white focus:outline-none focus:border-purple-500 cursor-pointer"
-                >
-                  {availableJobTypes.map((t) => (
-                    <option key={t} value={t}>{t}</option>
-                  ))}
-                  {/* If custom is entered and not in list */}
-                  {dieJobType && !availableJobTypes.includes(dieJobType) && (
-                    <option value={dieJobType}>{dieJobType}</option>
+                  ) : (
+                    <select
+                      value={dieJobType}
+                      onChange={(e) => setDieJobType(e.target.value)}
+                      className="w-full px-3 py-2 bg-slate-900 border border-slate-800 rounded-xl text-xs text-white focus:outline-none focus:border-purple-500 cursor-pointer"
+                    >
+                      {availableJobTypes.map((t) => (
+                        <option key={t} value={t}>{t}</option>
+                      ))}
+                      {dieJobType && !availableJobTypes.includes(dieJobType) && (
+                        <option value={dieJobType}>{dieJobType}</option>
+                      )}
+                      {availableJobTypes.length === 0 && !dieJobType && (
+                        <option value="General Corrugation">General Corrugation</option>
+                      )}
+                    </select>
                   )}
-                  {availableJobTypes.length === 0 && !dieJobType && (
-                    <option value="General Corrugation">General Corrugation</option>
-                  )}
-                </select>
+                </div>
               </div>
 
               {/* 3. Die Maker (Adding and Selection) */}
@@ -936,7 +937,6 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
                 <span className="text-xs font-bold text-white uppercase font-mono tracking-wide">
                   {stockQueue.length > 0 ? '+ Configure Additional Stock Item' : 'Stock Details'}
                 </span>
-                <span className="text-[11px] text-slate-400">Fill details and add to order</span>
               </div>
 
               {/* 1. STOCK TYPE (Search, Select, and Type/Save) */}
@@ -954,13 +954,13 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
                 className="text-[11px] text-amber-400 hover:text-amber-300 font-medium flex items-center gap-1 cursor-pointer"
               >
                 <Plus className="w-3 h-3" />
-                <span>{isAddingNewStockType ? 'Select from list' : 'Type & save new stock type'}</span>
+                <span>{isAddingNewStockType ? 'Select from list' : '+ Add Stock Type'}</span>
               </button>
             </div>
 
             {isAddingNewStockType && (
               <div className="p-3 bg-slate-950 border border-amber-500/40 rounded-xl space-y-2 mb-2">
-                <span className="text-[11px] text-amber-400 font-medium">Type custom stock type name to save:</span>
+                <span className="text-[11px] text-amber-400 font-medium">New Stock Type:</span>
                 <div className="flex gap-2">
                   <input
                     type="text"
@@ -1072,10 +1072,10 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
             )}
           </div>
 
-          {/* 2. JOB SIZE */}
+          {/* 2. BOARD SIZE */}
           <div>
             <label className="block text-xs font-semibold text-slate-200 mb-1.5">
-              Job Size (Dimensions / Deckle Cut) <span className="text-amber-400">*</span>
+              Board Size <span className="text-amber-400">*</span>
             </label>
             <div className="relative">
               <Maximize2 className="w-4 h-4 text-slate-500 absolute left-3 top-2.5" />
@@ -1105,13 +1105,13 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
                 className="text-[11px] text-amber-400 hover:text-amber-300 font-medium flex items-center gap-1 cursor-pointer"
               >
                 <Plus className="w-3 h-3" />
-                <span>{isAddingNewSupplier ? 'Select existing' : 'Type & save new receiving vendor'}</span>
+                <span>{isAddingNewSupplier ? 'Select existing' : '+ Add Supplier'}</span>
               </button>
             </div>
 
             {isAddingNewSupplier && (
               <div className="p-3 bg-slate-950 border border-amber-500/40 rounded-xl space-y-2 mb-2">
-                <span className="text-[11px] text-amber-400 font-medium">Type new vendor / receiving depot name to save:</span>
+                <span className="text-[11px] text-amber-400 font-medium">New Supplier:</span>
                 <div className="flex gap-2">
                   <input
                     type="text"
@@ -1287,13 +1287,13 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
                     className="text-[11px] text-amber-400 hover:text-amber-300 font-medium flex items-center gap-1 cursor-pointer"
                   >
                     <Plus className="w-3 h-3" />
-                    <span>{isAddingNewPress ? 'Select existing press' : 'Type & save new press'}</span>
+                    <span>{isAddingNewPress ? 'Select existing' : '+ Add Press'}</span>
                   </button>
                 </div>
 
                 {isAddingNewPress && (
                   <div className="p-3 bg-slate-900 border border-amber-500/40 rounded-xl space-y-2 mb-2">
-                    <span className="text-[11px] text-amber-400 font-medium">Type custom press name to save:</span>
+                    <span className="text-[11px] text-amber-400 font-medium">New Press Name:</span>
                     <div className="flex gap-2">
                       <input
                         type="text"

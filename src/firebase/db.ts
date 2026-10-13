@@ -309,6 +309,8 @@ export function subscribeToJobs(
           jobSize: data.jobSize || undefined,
           pressName: data.pressName || undefined,
           isUrgent: Boolean(data.isUrgent),
+          pressStatus: data.pressStatus || undefined,
+          isPrinted: data.isPrinted !== undefined ? Boolean(data.isPrinted) : undefined,
         });
       });
 
@@ -377,6 +379,8 @@ export async function addJobToFirestore(job: CorrugationJob): Promise<void> {
       jobSize: job.jobSize || null,
       pressName: job.pressName || null,
       isUrgent: Boolean(job.isUrgent),
+      pressStatus: job.pressStatus || 'Pending',
+      isPrinted: job.isPrinted !== undefined ? job.isPrinted : null,
       updatedAt: new Date().toISOString(),
     }, { merge: true });
   } catch (err) {

@@ -18,7 +18,9 @@ import {
   CloudCheck,
   RefreshCw,
   AlertCircle,
-  BarChart3
+  BarChart3,
+  Scissors,
+  Printer
 } from 'lucide-react';
 import { GeminiChatBot } from './GeminiChatBot';
 import { NewJobModal } from './NewJobModal';
@@ -66,6 +68,8 @@ export const EmptyDashboard: React.FC<EmptyDashboardProps> = ({ onLogout }) => {
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [isJobsMenuExpanded, setIsJobsMenuExpanded] = useState(true);
   const [isInventoryMenuExpanded, setIsInventoryMenuExpanded] = useState(true);
+  const [isDataMenuExpanded, setIsDataMenuExpanded] = useState(true);
+  const [dataTab, setDataTab] = useState<'stock' | 'die' | 'press'>('stock');
   
   // Views: dashboard | pending_jobs | order_inventory | existing_inventory | data
   const [currentView, setCurrentView] = useState<
@@ -320,12 +324,29 @@ export const EmptyDashboard: React.FC<EmptyDashboardProps> = ({ onLogout }) => {
 
     const targetJobId = orderList[0]?.jobId;
     if (targetJobId) {
+      // Determine printing specification from ordered stock (excluding Die items)
+      const stockItems = orderList.filter((o) => o.category !== 'Die');
+      const hasStock = stockItems.length > 0;
+      const hasPrintedStock = stockItems.some((o) => o.isPrinted);
+      const assignedPress = stockItems.find((o) => o.isPrinted && o.pressName)?.pressName;
+
       setJobs((prevJobs) =>
-        prevJobs.map((j) =>
-          j.id === targetJobId
-            ? { ...j, hasInventory: true, inventoryCount: (j.inventoryCount || 0) + newItems.length }
-            : j
-        )
+        prevJobs.map((j) => {
+          if (j.id === targetJobId) {
+            return {
+              ...j,
+              hasInventory: true,
+              inventoryCount: (j.inventoryCount || 0) + newItems.length,
+              ...(hasStock
+                ? {
+                    isPrinted: hasPrintedStock,
+                    pressName: hasPrintedStock ? (assignedPress || j.pressName) : undefined,
+                  }
+                : {}),
+            };
+          }
+          return j;
+        })
       );
     }
 
@@ -333,6 +354,20 @@ export const EmptyDashboard: React.FC<EmptyDashboardProps> = ({ onLogout }) => {
 
     try {
       await addInventoryItemsToFirestore(newItems, targetJobId);
+
+      // If stock items were ordered, explicitly update the job's isPrinted and pressName in Firestore
+      if (targetJobId) {
+        const stockItems = orderList.filter((o) => o.category !== 'Die');
+        if (stockItems.length > 0) {
+          const hasPrintedStock = stockItems.some((o) => o.isPrinted);
+          const assignedPress = stockItems.find((o) => o.isPrinted && o.pressName)?.pressName;
+          await updateJobDetailsInFirestore(targetJobId, {
+            isPrinted: hasPrintedStock,
+            pressName: hasPrintedStock ? (assignedPress || '') : '',
+          });
+        }
+      }
+
       setSyncStatus('Inventory saved to Firebase');
       setTimeout(() => setSyncStatus('Live Connected (mg-manager-3ab66)'), 3000);
     } catch (err: any) {
@@ -499,25 +534,52 @@ export const EmptyDashboard: React.FC<EmptyDashboardProps> = ({ onLogout }) => {
             >
               <span>Inventory ({inventory.length})</span>
             </button>
+            {/* Stock Data */}
             <button
-              onClick={() => setCurrentView('data')}
+              onClick={() => {
+                setCurrentView('data');
+                setDataTab('stock');
+              }}
               className={`px-3 py-1.5 text-xs font-semibold rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap ${
-                currentView === 'data'
+                currentView === 'data' && dataTab === 'stock'
+                  ? 'bg-blue-600 text-white font-bold shadow-xs'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              <Layers className="w-3.5 h-3.5 text-blue-400" />
+              <span>Stock Data</span>
+            </button>
+
+            {/* Die Data (Separate option for Die in Data) */}
+            <button
+              onClick={() => {
+                setCurrentView('data');
+                setDataTab('die');
+              }}
+              className={`px-3 py-1.5 text-xs font-semibold rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap ${
+                currentView === 'data' && dataTab === 'die'
+                  ? 'bg-purple-600 text-white font-bold shadow-xs'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              <Scissors className="w-3.5 h-3.5 text-purple-400" />
+              <span>Die Data</span>
+            </button>
+
+            {/* Press Data */}
+            <button
+              onClick={() => {
+                setCurrentView('data');
+                setDataTab('press');
+              }}
+              className={`px-3 py-1.5 text-xs font-semibold rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap ${
+                currentView === 'data' && dataTab === 'press'
                   ? 'bg-amber-500 text-slate-950 font-bold shadow-xs'
                   : 'text-slate-400 hover:text-white'
               }`}
             >
-              <Database className="w-3.5 h-3.5 text-emerald-400" />
-              <span>Data</span>
-              {urgentTotalCount > 0 ? (
-                <span className="px-1.5 py-0.2 bg-rose-500 text-white text-[10px] font-mono font-bold rounded-full">
-                  {urgentTotalCount} Urgent
-                </span>
-              ) : (
-                <span className="text-[10px] font-mono text-slate-500">
-                  Stock & Press
-                </span>
-              )}
+              <Printer className="w-3.5 h-3.5 text-amber-400" />
+              <span>Press Data</span>
             </button>
           </div>
 
@@ -763,49 +825,85 @@ export const EmptyDashboard: React.FC<EmptyDashboardProps> = ({ onLogout }) => {
                 )}
               </div>
 
-              {/* 3. SECTION: DATA (Ordered Stock & Press Operations) */}
+              {/* 3. SECTION: DATA (Stock, Die, Press) */}
               <div>
-                <button
-                  onClick={() => {
-                    setCurrentView('data');
-                    setIsDrawerOpen(false);
-                  }}
-                  className={`w-full flex items-center justify-between px-3.5 py-3 rounded-xl text-xs font-bold transition-all cursor-pointer shadow-xs ${
-                    currentView === 'data'
-                      ? 'bg-amber-500 text-slate-950 font-bold shadow-md'
-                      : 'bg-slate-950/80 text-white border border-slate-800 hover:border-amber-500/50 hover:bg-slate-900'
-                  }`}
+                <div 
+                  onClick={() => setIsDataMenuExpanded(!isDataMenuExpanded)}
+                  className="flex items-center justify-between px-3.5 py-2.5 rounded-xl bg-slate-950/60 border border-slate-800/80 text-xs font-bold text-white cursor-pointer hover:border-slate-700 transition-colors"
                 >
                   <div className="flex items-center gap-2.5">
-                    <div className={`w-6 h-6 rounded-md flex items-center justify-center ${
-                      currentView === 'data'
-                        ? 'bg-slate-950 text-amber-400'
-                        : 'bg-emerald-500/20 text-emerald-400'
-                    }`}>
+                    <div className="w-6 h-6 rounded-md bg-emerald-500/20 text-emerald-400 flex items-center justify-center">
                       <Database className="w-3.5 h-3.5" />
                     </div>
-                    <div className="text-left">
-                      <div className="leading-tight">Data</div>
-                      <div className={`text-[10px] font-normal ${currentView === 'data' ? 'text-slate-900' : 'text-slate-400'}`}>
-                        Ordered Stock & Press Data
-                      </div>
-                    </div>
+                    <span>Data</span>
                   </div>
-                  <div className="flex items-center gap-1.5">
-                    {urgentTotalCount > 0 && (
-                      <span className="px-1.5 py-0.5 rounded-full text-[10px] font-mono bg-rose-500 text-white font-bold animate-pulse">
-                        {urgentTotalCount} Urgent
-                      </span>
+                  <div className="flex items-center gap-2">
+                    {isDataMenuExpanded ? (
+                      <ChevronDown className="w-4 h-4 text-slate-400" />
+                    ) : (
+                      <ChevronRight className="w-4 h-4 text-slate-400" />
                     )}
-                    <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded-full ${
-                      currentView === 'data'
-                        ? 'bg-slate-950 text-amber-400 font-bold'
-                        : 'bg-slate-800 text-slate-300'
-                    }`}>
-                      Chart & Export
-                    </span>
                   </div>
-                </button>
+                </div>
+
+                {/* Data Sub-options */}
+                {isDataMenuExpanded && (
+                  <div className="mt-1.5 ml-3 pl-3 border-l-2 border-slate-800 space-y-1">
+                    <button
+                      onClick={() => {
+                        setCurrentView('data');
+                        setDataTab('stock');
+                        setIsDrawerOpen(false);
+                      }}
+                      className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
+                        currentView === 'data' && dataTab === 'stock'
+                          ? 'bg-blue-600 text-white font-bold'
+                          : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2">
+                        <Layers className="w-3.5 h-3.5 text-blue-400" />
+                        <span>Stock Data</span>
+                      </div>
+                    </button>
+
+                    <button
+                      onClick={() => {
+                        setCurrentView('data');
+                        setDataTab('die');
+                        setIsDrawerOpen(false);
+                      }}
+                      className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
+                        currentView === 'data' && dataTab === 'die'
+                          ? 'bg-purple-600 text-white font-bold'
+                          : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2">
+                        <Scissors className="w-3.5 h-3.5 text-purple-400" />
+                        <span>Die Data</span>
+                      </div>
+                    </button>
+
+                    <button
+                      onClick={() => {
+                        setCurrentView('data');
+                        setDataTab('press');
+                        setIsDrawerOpen(false);
+                      }}
+                      className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
+                        currentView === 'data' && dataTab === 'press'
+                          ? 'bg-amber-500 text-slate-950 font-bold'
+                          : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2">
+                        <Printer className="w-3.5 h-3.5 text-amber-400" />
+                        <span>Press Data</span>
+                      </div>
+                    </button>
+                  </div>
+                )}
               </div>
 
               {/* Firebase Database Status Box */}
@@ -982,6 +1080,8 @@ export const EmptyDashboard: React.FC<EmptyDashboardProps> = ({ onLogout }) => {
             onSetJobStatus={handleSetJobStatus}
             onDeleteJob={handleDeleteJob}
             onOrderInventoryForJob={handleOpenOrderForJob}
+            onUpdateInventoryDetails={handleUpdateInventoryDetails}
+            onUpdateJobDetails={handleUpdateJobDetails}
           />
         )}
 
@@ -1000,6 +1100,7 @@ export const EmptyDashboard: React.FC<EmptyDashboardProps> = ({ onLogout }) => {
             inventory={inventory}
             onOpenOrderModal={handleOpenOrderWithoutJob}
             onDeleteInventory={handleDeleteInventory}
+            onUpdateInventoryDetails={handleUpdateInventoryDetails}
           />
         )}
 
@@ -1011,6 +1112,7 @@ export const EmptyDashboard: React.FC<EmptyDashboardProps> = ({ onLogout }) => {
             availablePresses={presses}
             availableStockTypes={stockTypes}
             availableSuppliers={suppliers}
+            initialTab={dataTab}
             onUpdateJobDetails={handleUpdateJobDetails}
             onDeleteJob={handleDeleteJob}
             onAddJob={async (newJobData) => {

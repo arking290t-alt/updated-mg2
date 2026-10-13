@@ -17,6 +17,8 @@ export interface CorrugationJob {
   jobSize?: string;
   pressName?: string;
   isUrgent?: boolean;
+  pressStatus?: 'Pending' | 'Completed';
+  isPrinted?: boolean;
 }
 
 export interface InventoryItem {

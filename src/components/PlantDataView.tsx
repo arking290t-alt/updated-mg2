@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { 
   Database, 
   BarChart3, 
@@ -23,7 +23,13 @@ import {
   ArrowUpDown,
   FileText,
   Calendar,
-  Scissors
+  Scissors,
+  MoreVertical,
+  Eye,
+  ExternalLink,
+  Info,
+  Tag,
+  ChevronDown
 } from 'lucide-react';
 import { 
   CorrugationJob, 
@@ -42,6 +48,7 @@ interface PlantDataViewProps {
   availablePresses?: string[];
   availableStockTypes?: string[];
   availableSuppliers?: string[];
+  initialTab?: 'stock' | 'die' | 'press';
   onUpdateJobDetails: (jobId: string, updates: Partial<CorrugationJob>) => Promise<void>;
   onDeleteJob: (jobId: string) => Promise<void>;
   onAddJob?: (newJob: Omit<CorrugationJob, 'id' | 'createdAt' | 'status'> & { boardSize?: string; jobSize?: string; pressName?: string; isUrgent?: boolean; status?: JobStatus }) => Promise<void>;
@@ -56,6 +63,7 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
   availablePresses = INITIAL_PRESS_NAMES,
   availableStockTypes = INITIAL_STOCK_TYPES,
   availableSuppliers = COMMON_SUPPLIERS,
+  initialTab = 'stock',
   onUpdateJobDetails,
   onDeleteJob,
   onAddJob,
@@ -63,13 +71,24 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
   onDeleteInventory,
   onAddInventoryItem,
 }) => {
-  // Primary Tab: 'stock' (Ordered Stock Data) or 'press' (Press Operations Data)
-  const [activeTab, setActiveTab] = useState<'stock' | 'press'>('stock');
+  // Primary Tab: 'stock' (Ordered Stock Data), 'die' (Die Tooling Data), or 'press' (Press Operations Data)
+  const [activeTab, setActiveTab] = useState<'stock' | 'die' | 'press'>(initialTab);
+
+  useEffect(() => {
+    if (initialTab) {
+      setActiveTab(initialTab);
+    }
+  }, [initialTab]);
 
   // Search & Filters for Stock
   const [stockSearch, setStockSearch] = useState('');
   const [stockFilter, setStockFilter] = useState<'all' | 'pending' | 'received' | 'urgent'>('all');
   const [stockDateFilter, setStockDateFilter] = useState('');
+
+  // Search & Filters for Die
+  const [dieSearch, setDieSearch] = useState('');
+  const [dieFilter, setDieFilter] = useState<'all' | 'pending' | 'received' | 'urgent'>('all');
+  const [dieDateFilter, setDieDateFilter] = useState('');
 
   // Search & Filters for Press
   const [pressSearch, setPressSearch] = useState('');
@@ -91,6 +110,26 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
     name: string;
   } | null>(null);
 
+  // 3-Dot Dropdown Menu State: { section: 'stock' | 'die' | 'press', id: string } | null
+  const [activeDropdownMenu, setActiveDropdownMenu] = useState<{
+    section: 'stock' | 'die' | 'press';
+    id: string;
+  } | null>(null);
+
+  // Dedicated Detail Modals for 3-Dot "Show Detail" (Board Stock, Die Tooling, Press Run)
+  const [detailStockItem, setDetailStockItem] = useState<InventoryItem | null>(null);
+  const [detailDieItem, setDetailDieItem] = useState<InventoryItem | null>(null);
+  const [detailPressJob, setDetailPressJob] = useState<CorrugationJob | null>(null);
+
+  // Global listener to close 3-dot menus when clicking outside
+  useEffect(() => {
+    const handleClickOutside = () => setActiveDropdownMenu(null);
+    if (activeDropdownMenu) {
+      window.addEventListener('click', handleClickOutside);
+    }
+    return () => window.removeEventListener('click', handleClickOutside);
+  }, [activeDropdownMenu]);
+
   const todayIso = new Date().toISOString().split('T')[0];
 
   // Form State for Adding / Editing Stock
@@ -107,11 +146,25 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
 
   // Die Order specifics in Add Stock Modal
   const [stockAddCategory, setStockAddCategory] = useState<'Stock' | 'Die'>('Stock');
+  const [dieSelectedJobId, setDieSelectedJobId] = useState<string>('');
   const [dieJobName, setDieJobName] = useState<string>('');
   const [dieJobType, setDieJobType] = useState<string>('General Corrugation');
   const [dieMaker, setDieMaker] = useState<string>(INITIAL_DIE_MAKERS[0] || 'Apex Laser Dies');
   const [diePunchType, setDiePunchType] = useState<string>(INITIAL_PUNCH_TYPES[0] || 'Rotary Die Punch');
   const [dieQuantity, setDieQuantity] = useState<number>(1);
+
+  const handleSelectExistingJobForDie = (jobId: string) => {
+    setDieSelectedJobId(jobId);
+    if (!jobId || jobId === 'custom') {
+      setDieJobName('');
+      return;
+    }
+    const found = jobs.find((j) => j.id === jobId);
+    if (found) {
+      setDieJobName(found.jobName);
+      setDieJobType(found.jobType || 'General Corrugation');
+    }
+  };
 
   // Form State for Adding / Editing Press Job
   const [pressForm, setPressForm] = useState({
@@ -135,7 +188,8 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
   // HELPER: GET BOARD SIZE FROM ORDERED BOARD FOR JOB
   // -----------------------------------------------------------------
   const getLinkedBoardSize = (job: CorrugationJob): string => {
-    const linked = inventory.find(
+    // Only search in actual paper/board STOCK items (NOT die items!)
+    const linked = rawStockItems.find(
       (i) =>
         (i.jobId && i.jobId === job.id) ||
         (i.jobName && i.jobName.trim().toLowerCase() === job.jobName.trim().toLowerCase())
@@ -143,18 +197,27 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
     if (linked && linked.jobSize) {
       return linked.jobSize;
     }
-    return job.boardSize || 'Not Ordered Yet';
+    // If job has a boardSize that is NOT a punch type string (exclude "punch" or "die:")
+    if (job.boardSize && !job.boardSize.toLowerCase().includes('punch') && !job.boardSize.toLowerCase().includes('die:')) {
+      return job.boardSize;
+    }
+    return job.boardSize && !job.boardSize.toLowerCase().includes('punch') ? job.boardSize : 'Not Ordered Yet';
   };
 
   // -----------------------------------------------------------------
   // FILTERED DATA
   // -----------------------------------------------------------------
-  const filteredStock = inventory.filter((item) => {
+  // Split raw inventory into paper/board stock vs die tooling
+  const rawStockItems = inventory.filter((item) => item.category !== 'Die' && !item.dieMaker && !item.punchType);
+  const rawDieItems = inventory.filter((item) => item.category === 'Die' || Boolean(item.dieMaker || item.punchType));
+
+  const filteredStock = rawStockItems.filter((item) => {
     const matchesSearch =
       (item.stockType || '').toLowerCase().includes(stockSearch.toLowerCase()) ||
       (item.receivingFrom || '').toLowerCase().includes(stockSearch.toLowerCase()) ||
       (item.jobSize || '').toLowerCase().includes(stockSearch.toLowerCase()) ||
-      (item.jobName || '').toLowerCase().includes(stockSearch.toLowerCase());
+      (item.jobName || '').toLowerCase().includes(stockSearch.toLowerCase()) ||
+      (item.notes || '').toLowerCase().includes(stockSearch.toLowerCase());
 
     if (!matchesSearch) return false;
 
@@ -169,7 +232,64 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
     return true;
   });
 
-  const filteredPressJobs = jobs.filter((job) => {
+  const filteredDie = rawDieItems.filter((item) => {
+    const matchesSearch =
+      (item.jobName || '').toLowerCase().includes(dieSearch.toLowerCase()) ||
+      (item.dieMaker || '').toLowerCase().includes(dieSearch.toLowerCase()) ||
+      (item.punchType || '').toLowerCase().includes(dieSearch.toLowerCase()) ||
+      (item.jobType || '').toLowerCase().includes(dieSearch.toLowerCase()) ||
+      (item.notes || '').toLowerCase().includes(dieSearch.toLowerCase());
+
+    if (!matchesSearch) return false;
+
+    if (dieDateFilter) {
+      const itemDate = (item.orderedAt || '').split(' ')[0];
+      if (itemDate !== dieDateFilter) return false;
+    }
+
+    if (dieFilter === 'pending') return item.status !== 'Received';
+    if (dieFilter === 'received') return item.status === 'Received';
+    if (dieFilter === 'urgent') return Boolean(item.isUrgent);
+    return true;
+  });
+
+  // Helper: Check if a job requires Press / Printing operations
+  // If user selected Non-Printed or linked stock is non-printed, DO NOT SHOW IN PRINTING DATA!
+  const isJobPrinted = (job: CorrugationJob): boolean => {
+    // 1. Explicitly marked non-printed
+    if (job.isPrinted === false) return false;
+
+    // 2. Check linked paper/board stock
+    const linkedStocks = rawStockItems.filter(
+      (i) =>
+        (i.jobId && i.jobId === job.id) ||
+        (i.jobName && i.jobName.trim().toLowerCase() === job.jobName.trim().toLowerCase())
+    );
+
+    if (linkedStocks.length > 0) {
+      // If ANY stock item is printed, it requires printing press
+      const hasPrintedStock = linkedStocks.some((s) => s.isPrinted);
+      // If all linked stock is Non-Printed, this job is Non-Printed and must NOT show in Printing Data!
+      if (!hasPrintedStock) return false;
+      return true;
+    }
+
+    // 3. If job itself has isPrinted === true
+    if (job.isPrinted === true) return true;
+
+    // 4. If job has an assigned press name (and was not marked non-printed)
+    if (job.pressName && job.pressName.trim() !== '' && !job.pressName.toLowerCase().includes('not assigned')) {
+      return true;
+    }
+
+    // Default: If no stock ordered, no press assigned, and not marked printed:
+    // It does not belong in the printing data!
+    return false;
+  };
+
+  const pressEligibleJobs = jobs.filter(isJobPrinted);
+
+  const filteredPressJobs = pressEligibleJobs.filter((job) => {
     const matchesSearch =
       (job.jobName || '').toLowerCase().includes(pressSearch.toLowerCase()) ||
       (job.jobType || '').toLowerCase().includes(pressSearch.toLowerCase()) ||
@@ -184,24 +304,31 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
       if (jobDate !== pressDateFilter) return false;
     }
 
-    if (pressFilter === 'pending') return job.status === 'Pending' || job.status === 'Not Completed';
-    if (pressFilter === 'completed') return job.status === 'Completed';
+    const isPressDone = job.pressStatus === 'Completed';
+    if (pressFilter === 'pending') return !isPressDone;
+    if (pressFilter === 'completed') return isPressDone;
     if (pressFilter === 'urgent') return Boolean(job.isUrgent);
     return true;
   });
 
   // Metrics for Stock
-  const totalStockLots = inventory.length;
-  const receivedStockLots = inventory.filter((i) => i.status === 'Received').length;
-  const pendingStockLots = inventory.filter((i) => i.status !== 'Received').length;
-  const urgentStockLots = inventory.filter((i) => i.isUrgent).length;
-  const totalStockQuantity = inventory.reduce((sum, i) => sum + (Number(i.quantity) || 0), 0);
+  const totalStockLots = rawStockItems.length;
+  const receivedStockLots = rawStockItems.filter((i) => i.status === 'Received').length;
+  const pendingStockLots = rawStockItems.filter((i) => i.status !== 'Received').length;
+  const urgentStockLots = rawStockItems.filter((i) => i.isUrgent).length;
+  const totalStockQuantity = rawStockItems.reduce((sum, i) => sum + (Number(i.quantity) || 0), 0);
 
-  // Metrics for Press
-  const totalPressJobs = jobs.length;
-  const completedPressJobs = jobs.filter((j) => j.status === 'Completed').length;
-  const pendingPressJobs = jobs.filter((j) => j.status !== 'Completed').length;
-  const urgentPressJobs = jobs.filter((j) => j.isUrgent).length;
+  // Metrics for Die
+  const totalDieLots = rawDieItems.length;
+  const receivedDieLots = rawDieItems.filter((i) => i.status === 'Received').length;
+  const pendingDieLots = rawDieItems.filter((i) => i.status !== 'Received').length;
+  const urgentDieLots = rawDieItems.filter((i) => Boolean(i.isUrgent)).length;
+
+  // Metrics for Press (Press Stage Completion is separate from Job queue completion!)
+  const totalPressJobs = pressEligibleJobs.length;
+  const completedPressJobs = pressEligibleJobs.filter((j) => j.pressStatus === 'Completed').length;
+  const pendingPressJobs = pressEligibleJobs.filter((j) => j.pressStatus !== 'Completed').length;
+  const urgentPressJobs = pressEligibleJobs.filter((j) => j.isUrgent).length;
 
   // -----------------------------------------------------------------
   // TOGGLES
@@ -215,9 +342,19 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
     await onUpdateInventoryDetails(item.id, { isUrgent: !item.isUrgent });
   };
 
+  const handleToggleDieReceived = async (item: InventoryItem) => {
+    const nextStatus = item.status === 'Received' ? 'Not Received' : 'Received';
+    await onUpdateInventoryDetails(item.id, { status: nextStatus });
+  };
+
+  const handleToggleDieUrgent = async (item: InventoryItem) => {
+    await onUpdateInventoryDetails(item.id, { isUrgent: !item.isUrgent });
+  };
+
   const handleTogglePressStatus = async (job: CorrugationJob) => {
-    const nextStatus: JobStatus = job.status === 'Completed' ? 'Pending' : 'Completed';
-    await onUpdateJobDetails(job.id, { status: nextStatus });
+    // Only toggles press stage completion, NEVER auto-completes the parent job!
+    const nextStatus: 'Pending' | 'Completed' = job.pressStatus === 'Completed' ? 'Pending' : 'Completed';
+    await onUpdateJobDetails(job.id, { pressStatus: nextStatus });
   };
 
   const handleTogglePressUrgent = async (job: CorrugationJob) => {
@@ -230,7 +367,7 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
   const handleOpenAddStock = () => {
     setStockAddCategory('Stock');
     setDieJobName(jobs[0]?.jobName || '');
-    setDieJobType('General Corrugation');
+    setDieJobType(jobs[0]?.jobType || 'General Corrugation');
     setDieMaker(INITIAL_DIE_MAKERS[0] || 'Apex Laser Dies');
     setDiePunchType(INITIAL_PUNCH_TYPES[0] || 'Rotary Die Punch');
     setDieQuantity(1);
@@ -239,6 +376,27 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
       jobSize: '',
       quantity: 5000,
       receivingFrom: availableSuppliers[0] || 'Varun Board',
+      status: 'Not Received',
+      isUrgent: false,
+      orderDate: todayIso,
+      notes: '',
+    });
+    setIsAddStockModalOpen(true);
+  };
+
+  const handleOpenAddDie = () => {
+    setStockAddCategory('Die');
+    setDieSelectedJobId(jobs[0]?.id || '');
+    setDieJobName(jobs[0]?.jobName || '');
+    setDieJobType(jobs[0]?.jobType || 'General Corrugation');
+    setDieMaker(INITIAL_DIE_MAKERS[0] || 'Apex Laser Dies');
+    setDiePunchType(INITIAL_PUNCH_TYPES[0] || 'Rotary Die Punch');
+    setDieQuantity(1);
+    setStockForm({
+      stockType: '',
+      jobSize: '',
+      quantity: 1,
+      receivingFrom: INITIAL_DIE_MAKERS[0] || 'Apex Laser Dies',
       status: 'Not Received',
       isUrgent: false,
       orderDate: todayIso,
@@ -262,8 +420,8 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
           jobName: dieJobName.trim(),
           jobType: dieJobType.trim(),
           quantity: Number(dieQuantity) || 1,
-          status: stockForm.status,
-          isUrgent: stockForm.isUrgent,
+          status: 'Not Received',
+          isUrgent: false,
           isPrinted: false,
           notes: stockForm.notes,
         } as any);
@@ -274,8 +432,8 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
           jobSize: stockForm.jobSize || 'Standard',
           receivingFrom: stockForm.receivingFrom,
           quantity: Number(stockForm.quantity) || 1000,
-          status: stockForm.status,
-          isUrgent: stockForm.isUrgent,
+          status: 'Not Received',
+          isUrgent: false,
           isPrinted: false,
           notes: stockForm.notes,
         });
@@ -288,8 +446,8 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
         jobSize: stockAddCategory === 'Die' ? diePunchType : (stockForm.jobSize || 'Standard'),
         receivingFrom: stockAddCategory === 'Die' ? dieMaker : stockForm.receivingFrom,
         quantity: stockAddCategory === 'Die' ? Number(dieQuantity) : (Number(stockForm.quantity) || 1000),
-        status: stockForm.status,
-        isUrgent: stockForm.isUrgent,
+        status: 'Not Received',
+        isUrgent: false,
         orderedAt: dateFormatted,
         jobName: stockAddCategory === 'Die' ? dieJobName : undefined,
         jobType: stockAddCategory === 'Die' ? dieJobType : undefined,
@@ -377,14 +535,15 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
 
   const handleOpenEditPressJob = (job: CorrugationJob) => {
     setEditingPressJob(job);
+    const linked = getLinkedBoardSize(job);
     setPressForm({
       jobName: job.jobName,
       jobType: job.jobType,
-      boardSize: getLinkedBoardSize(job),
+      boardSize: linked !== 'Not Ordered Yet' ? linked : (job.boardSize || ''),
       jobSize: job.jobSize || '',
       pressName: job.pressName || availablePresses[0] || 'Flexo Press 1',
       jobPlacement: job.jobPlacement,
-      status: job.status,
+      status: (job.pressStatus || 'Pending') as any,
       isUrgent: Boolean(job.isUrgent),
       jobDate: (job.createdAt || '').split(' ')[0] || todayIso,
       notes: job.notes || '',
@@ -394,15 +553,15 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
   const handleSaveEditPressJob = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingPressJob) return;
-    const linkedBoard = getLinkedBoardSize(editingPressJob);
+    const finalBoardSize = pressForm.boardSize?.trim() || getLinkedBoardSize(editingPressJob);
     await onUpdateJobDetails(editingPressJob.id, {
-      jobName: pressForm.jobName,
+      jobName: pressForm.jobName.trim(),
       jobType: pressForm.jobType,
-      boardSize: linkedBoard,
-      jobSize: pressForm.jobSize,
-      pressName: pressForm.pressName,
+      boardSize: finalBoardSize,
+      jobSize: pressForm.jobSize.trim(),
+      pressName: pressForm.pressName.trim(),
       jobPlacement: pressForm.jobPlacement,
-      status: pressForm.status,
+      pressStatus: (pressForm.status === 'Completed' ? 'Completed' : 'Pending'),
       isUrgent: pressForm.isUrgent,
       notes: pressForm.notes,
     });
@@ -435,7 +594,7 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
           'Item ID',
           'Priority',
           'Stock / Paper Type',
-          'Board / Sheet Size',
+          'Board Size',
           'Quantity (Units)',
           'Supplier / Received From',
           'Linked Job',
@@ -473,6 +632,49 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
         a.download = `Stock_Chart_${today}.csv`;
         a.click();
         URL.revokeObjectURL(url);
+      } else if (activeTab === 'die') {
+        const headers = [
+          'Item ID',
+          'Priority',
+          'Order Date',
+          'Job Name',
+          'Job Type',
+          'Die Maker',
+          'Punch Type',
+          'Quantity',
+          'Status',
+          'Notes',
+        ];
+
+        const rows = filteredDie.map((it) => [
+          it.id,
+          it.isUrgent ? 'URGENT' : 'NORMAL',
+          (it.orderedAt || '').split(' ')[0],
+          it.jobName || 'Unassigned',
+          it.jobType || 'General Corrugation',
+          it.dieMaker || it.receivingFrom || '',
+          it.punchType || it.jobSize || '',
+          String(it.quantity || 1),
+          it.status || 'Not Received',
+          it.notes || '',
+        ]);
+
+        const csvContent =
+          '\uFEFF' +
+          [
+            'Die Tooling Chart',
+            '',
+            headers.map((h) => `"${h.replace(/"/g, '""')}"`).join(','),
+            ...rows.map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(',')),
+          ].join('\r\n');
+
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `Die_Chart_${today}.csv`;
+        a.click();
+        URL.revokeObjectURL(url);
       } else {
         // Press Data Export
         const headers = [
@@ -498,7 +700,7 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
           j.jobSize || 'Not Specified',
           j.pressName || 'Not Assigned',
           j.jobPlacement,
-          j.status,
+          j.pressStatus === 'Completed' ? 'Completed' : 'Pending',
           j.createdAt,
           j.notes || '',
         ]);
@@ -528,7 +730,7 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
   };
 
   // -----------------------------------------------------------------
-  // EXPORT 2: IMAGE (.png chart & table canvas snapshot)
+  // EXPORT 2: IMAGE (.png chart & table canvas snapshot - ALL WHITE & DECENT)
   // -----------------------------------------------------------------
   const exportToImage = () => {
     setIsExportingImage(true);
@@ -538,15 +740,17 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
 
-      const isStock = activeTab === 'stock';
-      const itemsToRender = isStock ? filteredStock : filteredPressJobs;
+      const itemsToRender = activeTab === 'stock' ? filteredStock : activeTab === 'die' ? filteredDie : filteredPressJobs;
+      const chartTitle = activeTab === 'stock' ? 'Board Stock Inventory Report' : activeTab === 'die' ? 'Die Tooling Registry Report' : 'Press Production Operations Schedule';
+      const fileDownloadName = activeTab === 'stock' ? `Stock_Chart_${today}.png` : activeTab === 'die' ? `Die_Chart_${today}.png` : `Press_Chart_${today}.png`;
+      const accentColor = activeTab === 'stock' ? '#2563eb' : activeTab === 'die' ? '#7c3aed' : '#d97706';
 
       // Canvas dimensions
       const width = 1200;
       const rowHeight = 44;
-      const headerHeight = 160;
-      const totalRows = Math.min(itemsToRender.length, 30); // Max 30 rows in image for clean layout
-      const height = Math.max(500, headerHeight + totalRows * rowHeight + 80);
+      const headerHeight = 170;
+      const totalRows = Math.min(itemsToRender.length, 35);
+      const height = Math.max(520, headerHeight + totalRows * rowHeight + 80);
 
       // Retina 2x scale
       const scale = 2;
@@ -554,218 +758,391 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
       canvas.height = height * scale;
       ctx.scale(scale, scale);
 
-      // Background
-      ctx.fillStyle = '#090d16';
+      // 1. All-white clean canvas background
+      ctx.fillStyle = '#ffffff';
       ctx.fillRect(0, 0, width, height);
 
-      // Top Banner gradient
-      const gradient = ctx.createLinearGradient(0, 0, width, 0);
-      gradient.addColorStop(0, '#1e293b');
-      gradient.addColorStop(1, '#0f172a');
-      ctx.fillStyle = gradient;
-      ctx.fillRect(0, 0, width, 120);
+      // 2. Elegant outer boundary border
+      ctx.strokeStyle = '#e2e8f0';
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(16, 16, width - 32, height - 32);
 
-      // Accent border
-      ctx.fillStyle = isStock ? '#3b82f6' : '#f59e0b';
-      ctx.fillRect(0, 118, width, 3);
+      // 3. Top accent brand strip
+      ctx.fillStyle = accentColor;
+      ctx.fillRect(16, 16, width - 32, 5);
 
-      // Title & Date
-      ctx.fillStyle = '#ffffff';
+      // 4. Header title & subtitle
+      ctx.fillStyle = '#0f172a';
       ctx.font = 'bold 22px system-ui, -apple-system, sans-serif';
-      ctx.fillText(
-        isStock ? 'Stock Chart' : 'Press Chart',
-        30,
-        45
-      );
+      ctx.fillText(chartTitle, 36, 52);
 
-      ctx.fillStyle = '#94a3b8';
-      ctx.font = '12px monospace';
-      ctx.fillText(`Generated: ${today}`, 30, 68);
+      ctx.fillStyle = '#64748b';
+      ctx.font = '12px system-ui, -apple-system, sans-serif';
+      ctx.fillText(`Generated: ${today}  ·  Corrugation & Converting Plant Operations`, 36, 74);
 
-      // KPI stat pills on top banner
-      if (isStock) {
-        ctx.fillStyle = '#1e293b';
-        ctx.fillRect(30, 82, 160, 26);
-        ctx.fillStyle = '#38bdf8';
-        ctx.font = 'bold 12px system-ui';
-        ctx.fillText(`Total Lots: ${totalStockLots}`, 40, 100);
+      // Helper for drawing a rounded rectangle
+      const drawRoundRect = (x: number, y: number, w: number, h: number, radius: number, fill: string, stroke: string) => {
+        ctx.beginPath();
+        ctx.moveTo(x + radius, y);
+        ctx.lineTo(x + w - radius, y);
+        ctx.quadraticCurveTo(x + w, y, x + w, y + radius);
+        ctx.lineTo(x + w, y + h - radius);
+        ctx.quadraticCurveTo(x + w, y + h, x + w - radius, y + h);
+        ctx.lineTo(x + radius, y + h);
+        ctx.quadraticCurveTo(x, y + h, x, y + h - radius);
+        ctx.lineTo(x, y + radius);
+        ctx.quadraticCurveTo(x, y, x + radius, y);
+        ctx.closePath();
+        ctx.fillStyle = fill;
+        ctx.fill();
+        ctx.strokeStyle = stroke;
+        ctx.lineWidth = 1;
+        ctx.stroke();
+      };
 
-        ctx.fillStyle = '#1e293b';
-        ctx.fillRect(200, 82, 160, 26);
-        ctx.fillStyle = '#4ade80';
-        ctx.fillText(`Received: ${receivedStockLots}`, 210, 100);
+      // 5. Four Clean All-White Decent KPI Cards
+      const cardY = 92;
+      const cardW = 265;
+      const cardH = 50;
 
-        ctx.fillStyle = '#1e293b';
-        ctx.fillRect(370, 82, 160, 26);
-        ctx.fillStyle = '#f87171';
-        ctx.fillText(`Pending: ${pendingStockLots}`, 380, 100);
+      if (activeTab === 'stock') {
+        // Total Lots
+        drawRoundRect(36, cardY, cardW, cardH, 8, '#f8fafc', '#e2e8f0');
+        ctx.fillStyle = '#64748b';
+        ctx.font = '11px system-ui';
+        ctx.fillText('TOTAL STOCK LOTS', 48, cardY + 20);
+        ctx.fillStyle = '#0f172a';
+        ctx.font = 'bold 18px monospace';
+        ctx.fillText(String(totalStockLots), 48, cardY + 42);
 
-        ctx.fillStyle = '#1e293b';
-        ctx.fillRect(540, 82, 160, 26);
-        ctx.fillStyle = '#fbbf24';
-        ctx.fillText(`🔥 Urgent: ${urgentStockLots}`, 550, 100);
+        // Received
+        drawRoundRect(315, cardY, cardW, cardH, 8, '#f0fdf4', '#bbf7d0');
+        ctx.fillStyle = '#15803d';
+        ctx.font = '11px system-ui';
+        ctx.fillText('RECEIVED AT PLANT', 327, cardY + 20);
+        ctx.fillStyle = '#166534';
+        ctx.font = 'bold 18px monospace';
+        ctx.fillText(String(receivedStockLots), 327, cardY + 42);
+
+        // Pending
+        drawRoundRect(594, cardY, cardW, cardH, 8, '#fff7ed', '#fed7aa');
+        ctx.fillStyle = '#c2410c';
+        ctx.font = '11px system-ui';
+        ctx.fillText('PENDING / NOT RECEIVED', 606, cardY + 20);
+        ctx.fillStyle = '#9a3412';
+        ctx.font = 'bold 18px monospace';
+        ctx.fillText(String(pendingStockLots), 606, cardY + 42);
+
+        // Urgent
+        drawRoundRect(873, cardY, cardW, cardH, 8, '#fef2f2', '#fecaca');
+        ctx.fillStyle = '#b91c1c';
+        ctx.font = '11px system-ui';
+        ctx.fillText('URGENT PRIORITY LOTS', 885, cardY + 20);
+        ctx.fillStyle = '#dc2626';
+        ctx.font = 'bold 18px monospace';
+        ctx.fillText(String(urgentStockLots), 885, cardY + 42);
+      } else if (activeTab === 'die') {
+        // Total Dies
+        drawRoundRect(36, cardY, cardW, cardH, 8, '#f8fafc', '#e2e8f0');
+        ctx.fillStyle = '#64748b';
+        ctx.font = '11px system-ui';
+        ctx.fillText('TOTAL DIE TOOLS', 48, cardY + 20);
+        ctx.fillStyle = '#0f172a';
+        ctx.font = 'bold 18px monospace';
+        ctx.fillText(String(totalDieLots), 48, cardY + 42);
+
+        // Received
+        drawRoundRect(315, cardY, cardW, cardH, 8, '#f0fdf4', '#bbf7d0');
+        ctx.fillStyle = '#15803d';
+        ctx.font = '11px system-ui';
+        ctx.fillText('RECEIVED DIES', 327, cardY + 20);
+        ctx.fillStyle = '#166534';
+        ctx.font = 'bold 18px monospace';
+        ctx.fillText(String(receivedDieLots), 327, cardY + 42);
+
+        // Pending
+        drawRoundRect(594, cardY, cardW, cardH, 8, '#fff7ed', '#fed7aa');
+        ctx.fillStyle = '#c2410c';
+        ctx.font = '11px system-ui';
+        ctx.fillText('PENDING / ORDERED', 606, cardY + 20);
+        ctx.fillStyle = '#9a3412';
+        ctx.font = 'bold 18px monospace';
+        ctx.fillText(String(pendingDieLots), 606, cardY + 42);
+
+        // Urgent
+        drawRoundRect(873, cardY, cardW, cardH, 8, '#fef2f2', '#fecaca');
+        ctx.fillStyle = '#b91c1c';
+        ctx.font = '11px system-ui';
+        ctx.fillText('URGENT DIES', 885, cardY + 20);
+        ctx.fillStyle = '#dc2626';
+        ctx.font = 'bold 18px monospace';
+        ctx.fillText(String(urgentDieLots), 885, cardY + 42);
       } else {
-        ctx.fillStyle = '#1e293b';
-        ctx.fillRect(30, 82, 160, 26);
-        ctx.fillStyle = '#fbbf24';
-        ctx.font = 'bold 12px system-ui';
-        ctx.fillText(`Total Runs: ${totalPressJobs}`, 40, 100);
+        // Total Press Runs
+        drawRoundRect(36, cardY, cardW, cardH, 8, '#f8fafc', '#e2e8f0');
+        ctx.fillStyle = '#64748b';
+        ctx.font = '11px system-ui';
+        ctx.fillText('TOTAL PRESS RUNS', 48, cardY + 20);
+        ctx.fillStyle = '#0f172a';
+        ctx.font = 'bold 18px monospace';
+        ctx.fillText(String(totalPressJobs), 48, cardY + 42);
 
-        ctx.fillStyle = '#1e293b';
-        ctx.fillRect(200, 82, 160, 26);
-        ctx.fillStyle = '#4ade80';
-        ctx.fillText(`Completed: ${completedPressJobs}`, 210, 100);
+        // Completed Press
+        drawRoundRect(315, cardY, cardW, cardH, 8, '#f0fdf4', '#bbf7d0');
+        ctx.fillStyle = '#15803d';
+        ctx.font = '11px system-ui';
+        ctx.fillText('COMPLETED RUNS', 327, cardY + 20);
+        ctx.fillStyle = '#166534';
+        ctx.font = 'bold 18px monospace';
+        ctx.fillText(String(completedPressJobs), 327, cardY + 42);
 
-        ctx.fillStyle = '#1e293b';
-        ctx.fillRect(370, 82, 160, 26);
-        ctx.fillStyle = '#fb923c';
-        ctx.fillText(`Pending: ${pendingPressJobs}`, 380, 100);
+        // Pending Press
+        drawRoundRect(594, cardY, cardW, cardH, 8, '#fff7ed', '#fed7aa');
+        ctx.fillStyle = '#c2410c';
+        ctx.font = '11px system-ui';
+        ctx.fillText('PENDING RUNS', 606, cardY + 20);
+        ctx.fillStyle = '#9a3412';
+        ctx.font = 'bold 18px monospace';
+        ctx.fillText(String(pendingPressJobs), 606, cardY + 42);
 
-        ctx.fillStyle = '#1e293b';
-        ctx.fillRect(540, 82, 160, 26);
-        ctx.fillStyle = '#f87171';
-        ctx.fillText(`🔥 Urgent: ${urgentPressJobs}`, 550, 100);
+        // Urgent Press
+        drawRoundRect(873, cardY, cardW, cardH, 8, '#fef2f2', '#fecaca');
+        ctx.fillStyle = '#b91c1c';
+        ctx.font = '11px system-ui';
+        ctx.fillText('URGENT JOBS', 885, cardY + 20);
+        ctx.fillStyle = '#dc2626';
+        ctx.font = 'bold 18px monospace';
+        ctx.fillText(String(urgentPressJobs), 885, cardY + 42);
       }
 
-      // Table Header
+      // 6. Decent Light Table Header
       let y = headerHeight;
-      ctx.fillStyle = '#111827';
-      ctx.fillRect(30, y - 28, width - 60, 32);
+      ctx.fillStyle = '#f1f5f9';
+      ctx.fillRect(36, y - 18, width - 72, 32);
+      ctx.strokeStyle = '#cbd5e1';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(36, y - 18, width - 72, 32);
 
-      ctx.fillStyle = '#cbd5e1';
-      ctx.font = 'bold 11px system-ui';
+      ctx.fillStyle = '#334155';
+      ctx.font = 'bold 11px system-ui, -apple-system, sans-serif';
 
-      if (isStock) {
-        ctx.fillText('PRIORITY', 45, y - 8);
-        ctx.fillText('STOCK / BOARD TYPE', 140, y - 8);
-        ctx.fillText('BOARD SIZE', 410, y - 8);
-        ctx.fillText('QTY (UNITS)', 530, y - 8);
-        ctx.fillText('SUPPLIER (FROM)', 660, y - 8);
-        ctx.fillText('STATUS', 890, y - 8);
-        ctx.fillText('ORDER DATE', 1040, y - 8);
+      if (activeTab === 'stock') {
+        ctx.fillText('PRIORITY', 48, y + 3);
+        ctx.fillText('STOCK / BOARD TYPE', 145, y + 3);
+        ctx.fillText('BOARD SIZE', 415, y + 3);
+        ctx.fillText('QTY (UNITS)', 540, y + 3);
+        ctx.fillText('SUPPLIER (FROM)', 670, y + 3);
+        ctx.fillText('STATUS', 890, y + 3);
+        ctx.fillText('ORDER DATE', 1030, y + 3);
+      } else if (activeTab === 'die') {
+        ctx.fillText('PRIORITY', 48, y + 3);
+        ctx.fillText('DATE', 135, y + 3);
+        ctx.fillText('JOB NAME', 225, y + 3);
+        ctx.fillText('JOB TYPE', 410, y + 3);
+        ctx.fillText('DIE MAKER', 590, y + 3);
+        ctx.fillText('PUNCH TYPE', 760, y + 3);
+        ctx.fillText('QTY', 895, y + 3);
+        ctx.fillText('STATUS', 975, y + 3);
       } else {
-        ctx.fillText('PRIORITY', 45, y - 8);
-        ctx.fillText('JOB NAME', 140, y - 8);
-        ctx.fillText('BOARD SIZE', 380, y - 8);
-        ctx.fillText('JOB SIZE', 510, y - 8);
-        ctx.fillText('ASSIGNED PRESS MACHINE', 640, y - 8);
-        ctx.fillText('STATUS', 910, y - 8);
-        ctx.fillText('CREATED', 1040, y - 8);
+        ctx.fillText('PRIORITY', 48, y + 3);
+        ctx.fillText('JOB NAME', 145, y + 3);
+        ctx.fillText('BOARD SIZE', 380, y + 3);
+        ctx.fillText('JOB SIZE', 510, y + 3);
+        ctx.fillText('ASSIGNED PRESS', 645, y + 3);
+        ctx.fillText('PRESS STATUS', 905, y + 3);
+        ctx.fillText('CREATED', 1040, y + 3);
       }
 
-      // Draw Rows
-      itemsToRender.slice(0, 30).forEach((item: any, idx) => {
+      // 7. Clean Table Rows (White / Light-Slate Alternating)
+      itemsToRender.slice(0, 35).forEach((item: any, idx) => {
         y += rowHeight;
 
         // Alternating row background
-        ctx.fillStyle = idx % 2 === 0 ? '#0b1120' : '#0f172a';
-        ctx.fillRect(30, y - 28, width - 60, rowHeight);
+        ctx.fillStyle = idx % 2 === 0 ? '#ffffff' : '#f8fafc';
+        ctx.fillRect(36, y - 18, width - 72, rowHeight);
 
-        // Row border
-        ctx.strokeStyle = '#1e293b';
-        ctx.lineWidth = 1;
-        ctx.strokeRect(30, y - 28, width - 60, rowHeight);
+        // Clean subtle border
+        ctx.strokeStyle = '#e2e8f0';
+        ctx.lineWidth = 0.8;
+        ctx.strokeRect(36, y - 18, width - 72, rowHeight);
 
         const isUrgent = Boolean(item.isUrgent);
 
-        // Priority Badge
-        if (isUrgent) {
-          ctx.fillStyle = '#dc2626';
-          ctx.fillRect(45, y - 20, 68, 20);
-          ctx.fillStyle = '#ffffff';
-          ctx.font = 'bold 10px system-ui';
-          ctx.fillText('🔥 URGENT', 52, y - 6);
-        } else {
-          ctx.fillStyle = '#334155';
-          ctx.fillRect(45, y - 20, 58, 20);
-          ctx.fillStyle = '#94a3b8';
-          ctx.font = '10px system-ui';
-          ctx.fillText('NORMAL', 53, y - 6);
-        }
+        // Draw Priority Badge Helper
+        const drawPriorityBadge = (posX: number) => {
+          if (isUrgent) {
+            drawRoundRect(posX, y - 10, 72, 22, 6, '#fee2e2', '#fca5a5');
+            ctx.fillStyle = '#b91c1c';
+            ctx.font = 'bold 10px system-ui';
+            ctx.fillText('🔥 URGENT', posX + 8, y + 5);
+          } else {
+            drawRoundRect(posX, y - 10, 60, 22, 6, '#f1f5f9', '#e2e8f0');
+            ctx.fillStyle = '#64748b';
+            ctx.font = '10px system-ui';
+            ctx.fillText('Normal', posX + 12, y + 5);
+          }
+        };
 
-        ctx.font = '12px system-ui';
+        if (activeTab === 'stock') {
+          // Priority
+          drawPriorityBadge(48);
 
-        if (isStock) {
           // Stock Type
-          ctx.fillStyle = '#f8fafc';
+          ctx.fillStyle = '#0f172a';
           ctx.font = 'bold 12px system-ui';
-          ctx.fillText((item.stockType || '').slice(0, 34), 140, y - 7);
+          ctx.fillText((item.stockType || '').slice(0, 32), 145, y + 5);
 
-          // Size
-          ctx.fillStyle = '#94a3b8';
+          // Board Size
+          ctx.fillStyle = '#0284c7';
           ctx.font = '11px monospace';
-          ctx.fillText(item.jobSize || 'Standard', 410, y - 7);
+          ctx.fillText(item.jobSize || 'Standard', 415, y + 5);
 
-          // Quantity
-          ctx.fillStyle = '#38bdf8';
+          // Qty
+          ctx.fillStyle = '#0f172a';
           ctx.font = 'bold 12px monospace';
-          ctx.fillText(Number(item.quantity || 0).toLocaleString(), 530, y - 7);
+          ctx.fillText(Number(item.quantity || 0).toLocaleString(), 540, y + 5);
 
           // Supplier
-          ctx.fillStyle = '#cbd5e1';
+          ctx.fillStyle = '#334155';
           ctx.font = '11px system-ui';
-          ctx.fillText((item.receivingFrom || '').slice(0, 24), 660, y - 7);
+          ctx.fillText((item.receivingFrom || '').slice(0, 24), 670, y + 5);
 
           // Status Badge
           const isRec = item.status === 'Received';
-          ctx.fillStyle = isRec ? '#166534' : '#9a3412';
-          ctx.fillRect(890, y - 20, 95, 20);
-          ctx.fillStyle = isRec ? '#86efac' : '#fdba74';
-          ctx.font = 'bold 10px system-ui';
-          ctx.fillText(isRec ? '✅ RECEIVED' : '⏳ NOT RECEIVED', 896, y - 6);
+          if (isRec) {
+            drawRoundRect(890, y - 10, 105, 22, 6, '#dcfce7', '#86efac');
+            ctx.fillStyle = '#15803d';
+            ctx.font = 'bold 10px system-ui';
+            ctx.fillText('✅ RECEIVED', 902, y + 5);
+          } else {
+            drawRoundRect(890, y - 10, 115, 22, 6, '#fef3c7', '#fde68a');
+            ctx.fillStyle = '#b45309';
+            ctx.font = 'bold 10px system-ui';
+            ctx.fillText('⏳ NOT RECEIVED', 900, y + 5);
+          }
 
           // Date
           ctx.fillStyle = '#64748b';
           ctx.font = '10px monospace';
-          ctx.fillText((item.orderedAt || '').slice(0, 16), 1040, y - 7);
-        } else {
-          // Press Job Name
-          ctx.fillStyle = '#f8fafc';
+          ctx.fillText((item.orderedAt || '').slice(0, 16), 1030, y + 5);
+        } else if (activeTab === 'die') {
+          // Priority
+          drawPriorityBadge(48);
+
+          // Date
+          ctx.fillStyle = '#64748b';
+          ctx.font = '10px monospace';
+          ctx.fillText((item.orderedAt || '').slice(0, 10), 135, y + 5);
+
+          // Job Name
+          ctx.fillStyle = '#0f172a';
           ctx.font = 'bold 12px system-ui';
-          ctx.fillText((item.jobName || '').slice(0, 28), 140, y - 7);
+          ctx.fillText((item.jobName || 'Unassigned').slice(0, 22), 225, y + 5);
 
-          // Board Size (same as board ordered for job)
-          ctx.fillStyle = '#fbbf24';
-          ctx.font = '11px monospace';
-          ctx.fillText(getLinkedBoardSize(item as CorrugationJob), 380, y - 7);
-
-          // Job Size
-          ctx.fillStyle = '#38bdf8';
-          ctx.font = '11px monospace';
-          ctx.fillText(item.jobSize || '—', 510, y - 7);
-
-          // Press Name
-          ctx.fillStyle = '#cbd5e1';
+          // Job Type
+          ctx.fillStyle = '#475569';
           ctx.font = '11px system-ui';
-          ctx.fillText((item.pressName || 'Not Assigned').slice(0, 26), 640, y - 7);
+          ctx.fillText((item.jobType || 'General').slice(0, 20), 410, y + 5);
+
+          // Die Maker
+          ctx.fillStyle = '#6d28d9';
+          ctx.font = '11px system-ui';
+          ctx.fillText((item.dieMaker || item.receivingFrom || '').slice(0, 20), 590, y + 5);
+
+          // Punch Type
+          ctx.fillStyle = '#334155';
+          ctx.font = '11px system-ui';
+          ctx.fillText((item.punchType || item.jobSize || '').slice(0, 16), 760, y + 5);
+
+          // Quantity
+          ctx.fillStyle = '#0f172a';
+          ctx.font = 'bold 12px monospace';
+          ctx.fillText(String(item.quantity || 1), 895, y + 5);
 
           // Status Badge
-          const isComp = item.status === 'Completed';
-          ctx.fillStyle = isComp ? '#166534' : '#b45309';
-          ctx.fillRect(910, y - 20, 88, 20);
-          ctx.fillStyle = isComp ? '#86efac' : '#fde047';
-          ctx.font = 'bold 10px system-ui';
-          ctx.fillText(isComp ? '✅ COMPLETED' : '⏳ PENDING', 916, y - 6);
+          const isRec = item.status === 'Received';
+          if (isRec) {
+            drawRoundRect(975, y - 10, 95, 22, 6, '#dcfce7', '#86efac');
+            ctx.fillStyle = '#15803d';
+            ctx.font = 'bold 10px system-ui';
+            ctx.fillText('✅ RECEIVED', 985, y + 5);
+          } else {
+            drawRoundRect(975, y - 10, 95, 22, 6, '#fef3c7', '#fde68a');
+            ctx.fillStyle = '#b45309';
+            ctx.font = 'bold 10px system-ui';
+            ctx.fillText('⏳ PENDING', 988, y + 5);
+          }
+        } else {
+          // Press Row
+          drawPriorityBadge(48);
+
+          // Job Name
+          ctx.fillStyle = '#0f172a';
+          ctx.font = 'bold 12px system-ui';
+          ctx.fillText((item.jobName || '').slice(0, 26), 145, y + 5);
+
+          // Board Size
+          ctx.fillStyle = '#b45309';
+          ctx.font = '11px monospace';
+          ctx.fillText(getLinkedBoardSize(item as CorrugationJob), 380, y + 5);
+
+          // Job Size
+          ctx.fillStyle = '#0284c7';
+          ctx.font = '11px monospace';
+          ctx.fillText(item.jobSize || '—', 510, y + 5);
+
+          // Press Name
+          ctx.fillStyle = '#334155';
+          ctx.font = '11px system-ui';
+          ctx.fillText((item.pressName || 'Not Assigned').slice(0, 24), 645, y + 5);
+
+          // Status Badge (Press status decoupled from Job status!)
+          const isComp = (item as CorrugationJob).pressStatus === 'Completed';
+          if (isComp) {
+            drawRoundRect(905, y - 10, 100, 22, 6, '#dcfce7', '#86efac');
+            ctx.fillStyle = '#15803d';
+            ctx.font = 'bold 10px system-ui';
+            ctx.fillText('✅ COMPLETED', 915, y + 5);
+          } else {
+            drawRoundRect(905, y - 10, 95, 22, 6, '#fef3c7', '#fde68a');
+            ctx.fillStyle = '#b45309';
+            ctx.font = 'bold 10px system-ui';
+            ctx.fillText('⏳ PENDING', 918, y + 5);
+          }
 
           // Created Date
           ctx.fillStyle = '#64748b';
           ctx.font = '10px monospace';
-          ctx.fillText((item.createdAt || '').slice(0, 16), 1040, y - 7);
+          ctx.fillText((item.createdAt || '').slice(0, 16), 1040, y + 5);
         }
       });
 
-      // Footer
-      ctx.fillStyle = '#475569';
-      ctx.font = '10px monospace';
+      // 8. Bottom Decent Footer
+      ctx.strokeStyle = '#e2e8f0';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(36, height - 36);
+      ctx.lineTo(width - 36, height - 36);
+      ctx.stroke();
+
+      ctx.fillStyle = '#64748b';
+      ctx.font = '11px system-ui';
       ctx.fillText(
-        isStock ? `Stock Chart · ${itemsToRender.length} Records` : `Press Chart · ${itemsToRender.length} Records`,
-        30,
-        height - 20
+        `Plant Management Dashboard · ${chartTitle} · ${itemsToRender.length} Total Records`,
+        36,
+        height - 18
+      );
+
+      ctx.font = '11px monospace';
+      ctx.fillText(
+        `Export Date: ${today}`,
+        width - 180,
+        height - 18
       );
 
       // Download PNG
       const link = document.createElement('a');
-      link.download = isStock ? `Stock_Chart_${today}.png` : `Press_Chart_${today}.png`;
+      link.download = fileDownloadName;
       link.href = canvas.toDataURL('image/png');
       link.click();
     } catch (err) {
@@ -824,6 +1201,14 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
               <Plus className="w-4 h-4 stroke-[2.5]" />
               <span>+ Add Ordered Stock</span>
             </button>
+          ) : activeTab === 'die' ? (
+            <button
+              onClick={handleOpenAddDie}
+              className="px-3.5 py-2 text-xs font-bold text-white bg-purple-600 hover:bg-purple-500 active:bg-purple-700 rounded-xl flex items-center gap-1.5 transition-colors cursor-pointer shadow-sm"
+            >
+              <Plus className="w-4 h-4 stroke-[2.5]" />
+              <span>+ Add Die Tool</span>
+            </button>
           ) : (
             <button
               onClick={handleOpenAddPressJob}
@@ -836,7 +1221,7 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
         </div>
       </div>
 
-      {/* 2. Top Navigation Tabs: Stock Data vs Press Data */}
+      {/* 2. Top Navigation Tabs: Stock Data vs Die Data vs Press Data */}
       <div className="flex border-b border-slate-800">
         <button
           onClick={() => setActiveTab('stock')}
@@ -847,10 +1232,27 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
           }`}
         >
           <Layers className="w-4 h-4" />
-          <span>1. Ordered Stock Data ({inventory.length})</span>
+          <span>1. Stock Data ({rawStockItems.length})</span>
           {urgentStockLots > 0 && (
             <span className="px-1.5 py-0.5 rounded-full text-[10px] font-mono bg-rose-500/20 text-rose-400 border border-rose-500/30 font-bold">
               {urgentStockLots} Urgent
+            </span>
+          )}
+        </button>
+
+        <button
+          onClick={() => setActiveTab('die')}
+          className={`flex items-center gap-2 px-5 py-3 text-xs sm:text-sm font-bold border-b-2 transition-all cursor-pointer ${
+            activeTab === 'die'
+              ? 'border-purple-500 text-purple-400 bg-purple-500/5'
+              : 'border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-700'
+          }`}
+        >
+          <Scissors className="w-4 h-4" />
+          <span>2. Die Data ({rawDieItems.length})</span>
+          {pendingDieLots > 0 && (
+            <span className="px-1.5 py-0.5 rounded-full text-[10px] font-mono bg-amber-500/20 text-amber-400 border border-amber-500/30 font-bold">
+              {pendingDieLots} Pending
             </span>
           )}
         </button>
@@ -864,7 +1266,7 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
           }`}
         >
           <Printer className="w-4 h-4" />
-          <span>2. Press Operations Data ({jobs.length})</span>
+          <span>3. Press Data ({totalPressJobs})</span>
           {urgentPressJobs > 0 && (
             <span className="px-1.5 py-0.5 rounded-full text-[10px] font-mono bg-rose-500/20 text-rose-400 border border-rose-500/30 font-bold">
               {urgentPressJobs} Urgent
@@ -881,55 +1283,46 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
           
           {/* Stock KPI Cards */}
           <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-5 gap-3 sm:gap-4">
-            <div className="p-4 rounded-xl bg-slate-900 border border-slate-800">
+            <div className="p-3.5 rounded-xl bg-slate-900 border border-slate-800">
               <div className="flex items-center justify-between text-xs text-slate-400 mb-1">
-                <span>Total Ordered Lots</span>
+                <span>Total Lots</span>
                 <Layers className="w-4 h-4 text-blue-400" />
               </div>
               <div className="text-xl sm:text-2xl font-bold font-mono text-white">{totalStockLots}</div>
-              <div className="text-[11px] text-slate-500 mt-0.5 font-mono">
-                {totalStockQuantity.toLocaleString()} total units
-              </div>
             </div>
 
-            <div className="p-4 rounded-xl bg-slate-900 border border-slate-800">
+            <div className="p-3.5 rounded-xl bg-slate-900 border border-slate-800">
               <div className="flex items-center justify-between text-xs text-slate-400 mb-1">
-                <span>Received at Factory</span>
+                <span>Received</span>
                 <CheckCircle2 className="w-4 h-4 text-emerald-400" />
               </div>
               <div className="text-xl sm:text-2xl font-bold font-mono text-emerald-400">{receivedStockLots}</div>
-              <div className="text-[11px] text-emerald-500/80 mt-0.5 font-mono">
-                {totalStockLots > 0 ? Math.round((receivedStockLots / totalStockLots) * 100) : 0}% received
-              </div>
             </div>
 
-            <div className="p-4 rounded-xl bg-slate-900 border border-slate-800">
+            <div className="p-3.5 rounded-xl bg-slate-900 border border-slate-800">
               <div className="flex items-center justify-between text-xs text-slate-400 mb-1">
-                <span>Pending / Not Received</span>
+                <span>Pending</span>
                 <Clock className="w-4 h-4 text-amber-400" />
               </div>
               <div className="text-xl sm:text-2xl font-bold font-mono text-amber-400">{pendingStockLots}</div>
-              <div className="text-[11px] text-amber-500/80 mt-0.5 font-mono">Awaiting delivery</div>
             </div>
 
-            <div className="p-4 rounded-xl bg-slate-900 border border-slate-800">
+            <div className="p-3.5 rounded-xl bg-slate-900 border border-slate-800">
               <div className="flex items-center justify-between text-xs text-slate-400 mb-1">
-                <span>Urgent Stock</span>
+                <span>Urgent</span>
                 <Flame className="w-4 h-4 text-rose-400" />
               </div>
               <div className="text-xl sm:text-2xl font-bold font-mono text-rose-400">{urgentStockLots}</div>
-              <div className="text-[11px] text-rose-500/80 mt-0.5 font-mono">High line priority</div>
             </div>
 
-            <div className="p-4 rounded-xl bg-slate-900 border border-slate-800 col-span-2 sm:col-span-4 lg:col-span-1">
+            <div className="p-3.5 rounded-xl bg-slate-900 border border-slate-800 col-span-2 sm:col-span-4 lg:col-span-1">
               <div className="flex items-center justify-between text-xs text-slate-400 mb-1">
-                <span>Suppliers Linked</span>
+                <span>Suppliers</span>
                 <Database className="w-4 h-4 text-purple-400" />
               </div>
               <div className="text-xl sm:text-2xl font-bold font-mono text-purple-300">
                 {new Set(inventory.map((i) => i.receivingFrom).filter(Boolean)).size}
               </div>
-              <div className="text-[11px] text-purple-400/80 mt-0.5">Active mill vendors</div>
             </div>
           </div>
 
@@ -1075,6 +1468,15 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
               >
                 🔥 Urgent ({urgentStockLots})
               </button>
+              <button
+                onClick={exportToImage}
+                disabled={isExportingImage}
+                className="px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap bg-blue-950/70 hover:bg-blue-900/70 text-blue-300 border border-blue-800/80 transition-colors cursor-pointer flex items-center gap-1.5 shadow-xs disabled:opacity-50"
+                title="Download styled PNG Stock Chart"
+              >
+                <Download className="w-3.5 h-3.5 text-blue-400" />
+                <span>{isExportingImage ? 'Generating...' : 'Download Stock Chart'}</span>
+              </button>
             </div>
           </div>
 
@@ -1086,7 +1488,7 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
                   <tr>
                     <th className="py-3 px-4">Urgent Flag</th>
                     <th className="py-3 px-4">Stock / Paper Type</th>
-                    <th className="py-3 px-4">Board / Job Size</th>
+                    <th className="py-3 px-4">Board Size</th>
                     <th className="py-3 px-4">Quantity</th>
                     <th className="py-3 px-4">Supplier (From)</th>
                     <th className="py-3 px-4">Linked Job</th>
@@ -1193,29 +1595,111 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
                             </button>
                           </td>
 
-                          {/* 8. Actions (Edit / Delete) */}
+                          {/* 8. Actions (Detail & 3-Dot Menu) */}
                           <td className="py-3 px-4 text-right whitespace-nowrap">
-                            <div className="flex items-center justify-end gap-1.5">
+                            <div className="flex items-center justify-end gap-1.5 relative">
                               <button
-                                onClick={() => handleOpenEditStock(item)}
-                                className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
-                                title="Edit Stock Details"
+                                type="button"
+                                onClick={() => setDetailStockItem(item)}
+                                className="px-2.5 py-1 text-xs font-semibold text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-lg transition-colors cursor-pointer flex items-center gap-1"
+                                title="Show Stock Detail"
                               >
-                                <Edit3 className="w-3.5 h-3.5" />
+                                <Eye className="w-3.5 h-3.5 text-blue-400" />
+                                <span>Detail</span>
                               </button>
-                              <button
-                                onClick={() =>
-                                  setDeleteConfirmTarget({
-                                    type: 'inventory',
-                                    id: item.id,
-                                    name: `${item.stockType} (${item.quantity} units)`,
-                                  })
-                                }
-                                className="p-1.5 text-slate-400 hover:text-rose-400 hover:bg-rose-950/30 rounded-lg transition-colors cursor-pointer"
-                                title="Delete Stock Record"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
+
+                              {/* 3-DOT MENU BUTTON */}
+                              <div className="relative">
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setActiveDropdownMenu(
+                                      activeDropdownMenu?.section === 'stock' && activeDropdownMenu?.id === item.id
+                                        ? null
+                                        : { section: 'stock', id: item.id }
+                                    );
+                                  }}
+                                  className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
+                                  title="3-Dot Menu: Details & Quick Controls"
+                                >
+                                  <MoreVertical className="w-4 h-4" />
+                                </button>
+
+                                {/* FLOATING 3-DOT DROPDOWN MENU */}
+                                {activeDropdownMenu?.section === 'stock' && activeDropdownMenu?.id === item.id && (
+                                  <div 
+                                    onClick={(e) => e.stopPropagation()}
+                                    className="absolute right-0 top-full mt-1 w-52 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl z-40 py-1.5 animate-in fade-in zoom-in-95 duration-100 text-left"
+                                  >
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setActiveDropdownMenu(null);
+                                        setDetailStockItem(item);
+                                      }}
+                                      className="w-full px-3 py-2 text-xs font-semibold text-blue-400 hover:bg-blue-950/40 flex items-center gap-2 cursor-pointer transition-colors"
+                                    >
+                                      <Eye className="w-3.5 h-3.5 text-blue-400" />
+                                      <span>Show Detail</span>
+                                    </button>
+
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setActiveDropdownMenu(null);
+                                        handleToggleStockReceived(item);
+                                      }}
+                                      className="w-full px-3 py-2 text-xs font-medium text-slate-200 hover:text-white hover:bg-slate-800 flex items-center gap-2 cursor-pointer transition-colors"
+                                    >
+                                      <CheckCircle2 className={`w-3.5 h-3.5 ${isReceived ? 'text-emerald-400' : 'text-slate-400'}`} />
+                                      <span>{isReceived ? 'Mark Not Received' : 'Mark Received'}</span>
+                                    </button>
+
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setActiveDropdownMenu(null);
+                                        handleToggleStockUrgent(item);
+                                      }}
+                                      className="w-full px-3 py-2 text-xs font-medium text-slate-200 hover:text-white hover:bg-slate-800 flex items-center gap-2 cursor-pointer transition-colors"
+                                    >
+                                      <Flame className={`w-3.5 h-3.5 ${isUrgent ? 'text-rose-400 fill-rose-400' : 'text-slate-400'}`} />
+                                      <span>{isUrgent ? 'Remove Urgent' : 'Mark Urgent 🔥'}</span>
+                                    </button>
+
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setActiveDropdownMenu(null);
+                                        handleOpenEditStock(item);
+                                      }}
+                                      className="w-full px-3 py-2 text-xs font-medium text-slate-200 hover:text-white hover:bg-slate-800 flex items-center gap-2 cursor-pointer transition-colors"
+                                    >
+                                      <Edit3 className="w-3.5 h-3.5 text-amber-400" />
+                                      <span>Edit Stock Specs</span>
+                                    </button>
+
+                                    <div className="my-1 border-t border-slate-800" />
+
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setActiveDropdownMenu(null);
+                                        setDeleteConfirmTarget({
+                                          type: 'inventory',
+                                          id: item.id,
+                                          name: `${item.stockType} (${item.quantity} units)`,
+                                        });
+                                      }}
+                                      className="w-full px-3 py-2 text-xs font-medium text-rose-400 hover:bg-rose-950/40 flex items-center gap-2 cursor-pointer transition-colors"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                      <span>Delete Record</span>
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
                             </div>
                           </td>
                         </tr>
@@ -1227,13 +1711,8 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
             </div>
 
             {/* Table Footer */}
-            <div className="px-4 py-3 bg-slate-950/60 border-t border-slate-800 text-xs text-slate-400 flex flex-col sm:flex-row items-center justify-between gap-2 font-mono">
-              <div>
-                Showing <strong>{filteredStock.length}</strong> of <strong>{inventory.length}</strong> stock items
-              </div>
-              <div className="text-[11px] text-slate-500">
-                Click any <strong>Received</strong> or <strong>Urgent</strong> button to instantly update live database
-              </div>
+            <div className="px-4 py-3 bg-slate-950/60 border-t border-slate-800 text-xs text-slate-400 font-mono">
+              Showing <strong>{filteredStock.length}</strong> of <strong>{rawStockItems.length}</strong> stock items
             </div>
           </div>
 
@@ -1241,49 +1720,462 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
       )}
 
       {/* =================================================================== */}
-      {/* TAB 2: PRESS OPERATIONS DATA */}
+      {/* TAB 2: DIE TOOLING DATA */}
+      {/* =================================================================== */}
+      {activeTab === 'die' && (
+        <div className="space-y-6 animate-in fade-in duration-150">
+          
+          {/* Die KPI Cards */}
+          {/* Die KPI Cards (4 clean cards) */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
+            <div className="p-3.5 rounded-xl bg-slate-900 border border-slate-800">
+              <div className="flex items-center justify-between text-xs text-slate-400 mb-1">
+                <span>Total Die Tools</span>
+                <Scissors className="w-4 h-4 text-purple-400" />
+              </div>
+              <div className="text-xl sm:text-2xl font-bold font-mono text-white">{totalDieLots}</div>
+            </div>
+
+            <div className="p-3.5 rounded-xl bg-slate-900 border border-slate-800">
+              <div className="flex items-center justify-between text-xs text-slate-400 mb-1">
+                <span>Received</span>
+                <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+              </div>
+              <div className="text-xl sm:text-2xl font-bold font-mono text-emerald-400">{receivedDieLots}</div>
+            </div>
+
+            <div className="p-3.5 rounded-xl bg-slate-900 border border-slate-800">
+              <div className="flex items-center justify-between text-xs text-slate-400 mb-1">
+                <span>Pending</span>
+                <Clock className="w-4 h-4 text-amber-400" />
+              </div>
+              <div className="text-xl sm:text-2xl font-bold font-mono text-amber-400">{pendingDieLots}</div>
+            </div>
+
+            <div className="p-3.5 rounded-xl bg-slate-900 border border-slate-800">
+              <div className="flex items-center justify-between text-xs text-slate-400 mb-1">
+                <span>Urgent Dies</span>
+                <Flame className="w-4 h-4 text-rose-400" />
+              </div>
+              <div className="text-xl sm:text-2xl font-bold font-mono text-rose-400">{urgentDieLots}</div>
+            </div>
+          </div>
+
+          {/* Visual Progress / Distribution Chart for Die */}
+          <div className="p-4 rounded-xl bg-slate-900 border border-slate-800 space-y-2">
+            <div className="flex items-center justify-between text-xs">
+              <span className="font-semibold text-slate-300 flex items-center gap-1.5">
+                <BarChart3 className="w-3.5 h-3.5 text-purple-400" />
+                <span>Die Tooling Readiness Breakdown</span>
+              </span>
+              <span className="font-mono text-slate-400 text-[11px]">
+                {receivedDieLots} of {totalDieLots} Received
+              </span>
+            </div>
+            
+            <div className="h-3 w-full bg-slate-950 rounded-full overflow-hidden flex">
+              {totalDieLots > 0 ? (
+                <>
+                  <div
+                    style={{ width: `${(receivedDieLots / totalDieLots) * 100}%` }}
+                    className="bg-emerald-500 h-full transition-all duration-300"
+                    title={`Received: ${receivedDieLots}`}
+                  />
+                  <div
+                    style={{ width: `${(pendingDieLots / totalDieLots) * 100}%` }}
+                    className="bg-amber-500 h-full transition-all duration-300"
+                    title={`Not Received: ${pendingDieLots}`}
+                  />
+                </>
+              ) : (
+                <div className="w-full bg-slate-800 h-full" />
+              )}
+            </div>
+
+            <div className="flex items-center gap-4 text-[11px] text-slate-400 font-mono pt-1">
+              <div className="flex items-center gap-1.5">
+                <span className="w-2.5 h-2.5 rounded-xs bg-emerald-500"></span>
+                <span>Received ({receivedDieLots})</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="w-2.5 h-2.5 rounded-xs bg-amber-500"></span>
+                <span>Not Received ({pendingDieLots})</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="w-2.5 h-2.5 rounded-xs bg-rose-500"></span>
+                <span>Urgent Dies ({urgentDieLots})</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Search, Filter & Quick Options for Die */}
+          <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 flex-1 max-w-xl">
+              <div className="relative flex-1">
+                <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input
+                  type="text"
+                  value={dieSearch}
+                  onChange={(e) => setDieSearch(e.target.value)}
+                  placeholder="Search job name, die maker, or punch type..."
+                  className="w-full pl-9 pr-3 py-2 bg-slate-900 border border-slate-800 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-purple-500"
+                />
+                {dieSearch && (
+                  <button
+                    onClick={() => setDieSearch('')}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+
+              {/* Date Filter */}
+              <div className="flex items-center gap-1.5 bg-slate-900 border border-slate-800 rounded-xl px-2.5 py-1.5 text-xs shrink-0">
+                <Calendar className="w-3.5 h-3.5 text-purple-400 shrink-0" />
+                <span className="text-[11px] text-slate-400 font-medium">Date:</span>
+                <input
+                  type="date"
+                  value={dieDateFilter}
+                  onChange={(e) => setDieDateFilter(e.target.value)}
+                  className="bg-transparent text-white text-xs focus:outline-none [color-scheme:dark] cursor-pointer"
+                />
+                {dieDateFilter ? (
+                  <button
+                    type="button"
+                    onClick={() => setDieDateFilter('')}
+                    title="Clear date filter"
+                    className="text-slate-400 hover:text-white p-0.5 rounded cursor-pointer"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setDieDateFilter(todayIso)}
+                    className="text-[10px] text-purple-400 hover:text-purple-300 font-semibold px-1.5 py-0.5 rounded bg-purple-950/40 border border-purple-800/40 cursor-pointer"
+                  >
+                    Today
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0">
+              <button
+                onClick={() => setDieFilter('all')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors cursor-pointer ${
+                  dieFilter === 'all'
+                    ? 'bg-purple-600 text-white font-bold'
+                    : 'bg-slate-900 text-slate-400 hover:text-white border border-slate-800'
+                }`}
+              >
+                All ({totalDieLots})
+              </button>
+              <button
+                onClick={() => setDieFilter('pending')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors cursor-pointer ${
+                  dieFilter === 'pending'
+                    ? 'bg-amber-600 text-white font-bold'
+                    : 'bg-slate-900 text-slate-400 hover:text-white border border-slate-800'
+                }`}
+              >
+                ⏳ Not Received ({pendingDieLots})
+              </button>
+              <button
+                onClick={() => setDieFilter('received')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors cursor-pointer ${
+                  dieFilter === 'received'
+                    ? 'bg-emerald-600 text-white font-bold'
+                    : 'bg-slate-900 text-slate-400 hover:text-white border border-slate-800'
+                }`}
+              >
+                ✅ Received ({receivedDieLots})
+              </button>
+              <button
+                onClick={() => setDieFilter('urgent')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors cursor-pointer ${
+                  dieFilter === 'urgent'
+                    ? 'bg-rose-600 text-white font-bold'
+                    : 'bg-slate-900 text-slate-400 hover:text-white border border-slate-800'
+                }`}
+              >
+                🔥 Urgent ({urgentDieLots})
+              </button>
+              <button
+                onClick={exportToImage}
+                disabled={isExportingImage}
+                className="px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap bg-purple-950/70 hover:bg-purple-900/70 text-purple-300 border border-purple-800/80 transition-colors cursor-pointer flex items-center gap-1.5 shadow-xs disabled:opacity-50"
+                title="Download styled PNG Die Tooling Chart"
+              >
+                <Download className="w-3.5 h-3.5 text-purple-400" />
+                <span>{isExportingImage ? 'Generating...' : 'Download Die Chart'}</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Die Tooling Data Table */}
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-sm">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-slate-950/80 text-slate-400 font-semibold uppercase tracking-wider border-b border-slate-800 text-[11px]">
+                  <tr>
+                    <th className="py-3 px-4">Urgent Flag</th>
+                    <th className="py-3 px-4">Order Date</th>
+                    <th className="py-3 px-4">Job Name</th>
+                    <th className="py-3 px-4">Job Type</th>
+                    <th className="py-3 px-4">Die Maker</th>
+                    <th className="py-3 px-4">Punch Type</th>
+                    <th className="py-3 px-4">Quantity</th>
+                    <th className="py-3 px-4">Receiving Status</th>
+                    <th className="py-3 px-4">Notes</th>
+                    <th className="py-3 px-4 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800/80">
+                  {filteredDie.length === 0 ? (
+                    <tr>
+                      <td colSpan={10} className="py-12 text-center text-slate-500">
+                        <Scissors className="w-8 h-8 mx-auto mb-2 opacity-40 text-purple-400" />
+                        <p className="text-sm font-medium text-slate-400">No die tooling records found</p>
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredDie.map((item) => {
+                      const isReceived = item.status === 'Received';
+                      const isUrgent = Boolean(item.isUrgent);
+                      return (
+                        <tr 
+                          key={item.id} 
+                          className={`hover:bg-slate-800/40 transition-colors ${
+                            isUrgent ? 'bg-rose-950/10' : ''
+                          }`}
+                        >
+                          {/* 1. Urgent Toggle Button for Die */}
+                          <td className="py-3 px-4 whitespace-nowrap">
+                            <button
+                              onClick={() => handleToggleDieUrgent(item)}
+                              title={isUrgent ? 'Click to remove Urgent priority' : 'Click to mark Urgent'}
+                              className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                                isUrgent
+                                  ? 'bg-rose-500/20 text-rose-400 border border-rose-500/40 hover:bg-rose-500/30 shadow-xs'
+                                  : 'bg-slate-800 text-slate-400 hover:text-rose-300 hover:bg-slate-700'
+                              }`}
+                            >
+                              <Flame className={`w-3.5 h-3.5 ${isUrgent ? 'text-rose-400 fill-rose-400 animate-pulse' : 'text-slate-500'}`} />
+                              <span>{isUrgent ? 'URGENT' : 'Normal'}</span>
+                            </button>
+                          </td>
+
+                          {/* 2. Order Date */}
+                          <td className="py-3 px-4 font-mono text-slate-400 whitespace-nowrap">
+                            {(item.orderedAt || '').split(' ')[0] || '—'}
+                          </td>
+
+                          {/* 3. Job Name */}
+                          <td className="py-3 px-4 font-bold text-white whitespace-nowrap">
+                            {item.jobName || 'Unassigned'}
+                          </td>
+
+                          {/* 4. Job Type */}
+                          <td className="py-3 px-4 text-slate-300">
+                            {item.jobType || 'General Corrugation'}
+                          </td>
+
+                          {/* 5. Die Maker */}
+                          <td className="py-3 px-4 text-purple-300 font-medium whitespace-nowrap">
+                            {item.dieMaker || item.receivingFrom || 'Apex Laser Dies'}
+                          </td>
+
+                          {/* 6. Punch Type */}
+                          <td className="py-3 px-4 font-mono text-slate-300 whitespace-nowrap">
+                            {item.punchType || item.jobSize || 'Rotary Die Punch'}
+                          </td>
+
+                          {/* 7. Quantity */}
+                          <td className="py-3 px-4 font-mono font-bold text-sky-400 whitespace-nowrap">
+                            {item.quantity || 1}
+                          </td>
+
+                          {/* 8. Receiving Status Toggle */}
+                          <td className="py-3 px-4 whitespace-nowrap">
+                            <button
+                              onClick={() => handleToggleDieReceived(item)}
+                              title={isReceived ? 'Click to mark Not Received' : 'Click to mark Received'}
+                              className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                                isReceived
+                                  ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/25'
+                                  : 'bg-amber-500/15 text-amber-300 border border-amber-500/30 hover:bg-amber-500/25'
+                              }`}
+                            >
+                              {isReceived ? (
+                                <>
+                                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                                  <span>✅ Received</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Clock className="w-3.5 h-3.5 text-amber-400" />
+                                  <span>⏳ Not Received</span>
+                                </>
+                              )}
+                            </button>
+                          </td>
+
+                          {/* 9. Notes */}
+                          <td className="py-3 px-4 text-slate-400 max-w-xs truncate">
+                            {item.notes || '—'}
+                          </td>
+
+                          {/* 10. Actions (Detail & 3-Dot Menu) */}
+                          <td className="py-3 px-4 text-right whitespace-nowrap">
+                            <div className="flex items-center justify-end gap-1.5 relative">
+                              <button
+                                type="button"
+                                onClick={() => setDetailDieItem(item)}
+                                className="px-2.5 py-1 text-xs font-semibold text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-lg transition-colors cursor-pointer flex items-center gap-1"
+                                title="Show Die Detail"
+                              >
+                                <Eye className="w-3.5 h-3.5 text-purple-400" />
+                                <span>Detail</span>
+                              </button>
+
+                              {/* 3-DOT MENU BUTTON */}
+                              <div className="relative">
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setActiveDropdownMenu(
+                                      activeDropdownMenu?.section === 'die' && activeDropdownMenu?.id === item.id
+                                        ? null
+                                        : { section: 'die', id: item.id }
+                                    );
+                                  }}
+                                  className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
+                                  title="3-Dot Menu: Details & Quick Controls"
+                                >
+                                  <MoreVertical className="w-4 h-4" />
+                                </button>
+
+                                {/* FLOATING 3-DOT DROPDOWN MENU */}
+                                {activeDropdownMenu?.section === 'die' && activeDropdownMenu?.id === item.id && (
+                                  <div 
+                                    onClick={(e) => e.stopPropagation()}
+                                    className="absolute right-0 top-full mt-1 w-52 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl z-40 py-1.5 animate-in fade-in zoom-in-95 duration-100 text-left"
+                                  >
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setActiveDropdownMenu(null);
+                                        setDetailDieItem(item);
+                                      }}
+                                      className="w-full px-3 py-2 text-xs font-semibold text-purple-400 hover:bg-purple-950/40 flex items-center gap-2 cursor-pointer transition-colors"
+                                    >
+                                      <Eye className="w-3.5 h-3.5 text-purple-400" />
+                                      <span>Show Detail</span>
+                                    </button>
+
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setActiveDropdownMenu(null);
+                                        handleToggleDieReceived(item);
+                                      }}
+                                      className="w-full px-3 py-2 text-xs font-medium text-slate-200 hover:text-white hover:bg-slate-800 flex items-center gap-2 cursor-pointer transition-colors"
+                                    >
+                                      <CheckCircle2 className={`w-3.5 h-3.5 ${isReceived ? 'text-emerald-400' : 'text-slate-400'}`} />
+                                      <span>{isReceived ? 'Mark Not Received' : 'Mark Received'}</span>
+                                    </button>
+
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setActiveDropdownMenu(null);
+                                        handleToggleDieUrgent(item);
+                                      }}
+                                      className="w-full px-3 py-2 text-xs font-medium text-slate-200 hover:text-white hover:bg-slate-800 flex items-center gap-2 cursor-pointer transition-colors"
+                                    >
+                                      <Flame className={`w-3.5 h-3.5 ${isUrgent ? 'text-rose-400 fill-rose-400' : 'text-slate-400'}`} />
+                                      <span>{isUrgent ? 'Remove Urgent' : 'Mark Urgent 🔥'}</span>
+                                    </button>
+
+                                    <div className="my-1 border-t border-slate-800" />
+
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setActiveDropdownMenu(null);
+                                        setDeleteConfirmTarget({
+                                          type: 'inventory',
+                                          id: item.id,
+                                          name: item.stockType || item.jobName || 'Die Record',
+                                        });
+                                      }}
+                                      className="w-full px-3 py-2 text-xs font-medium text-rose-400 hover:bg-rose-950/40 flex items-center gap-2 cursor-pointer transition-colors"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                      <span>Delete Record</span>
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="px-4 py-3 bg-slate-950/60 border-t border-slate-800 text-xs text-slate-400 font-mono">
+              Showing <strong>{filteredDie.length}</strong> of <strong>{totalDieLots}</strong> die tooling records
+            </div>
+          </div>
+
+        </div>
+      )}
+
+      {/* =================================================================== */}
+      {/* TAB 3: PRESS OPERATIONS DATA */}
       {/* =================================================================== */}
       {activeTab === 'press' && (
         <div className="space-y-6 animate-in fade-in duration-150">
           
           {/* Press KPI Cards */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
-            <div className="p-4 rounded-xl bg-slate-900 border border-slate-800">
+            <div className="p-3.5 rounded-xl bg-slate-900 border border-slate-800">
               <div className="flex items-center justify-between text-xs text-slate-400 mb-1">
-                <span>Total Press Jobs</span>
+                <span>Total Jobs</span>
                 <Printer className="w-4 h-4 text-amber-400" />
               </div>
               <div className="text-xl sm:text-2xl font-bold font-mono text-white">{totalPressJobs}</div>
-              <div className="text-[11px] text-slate-500 mt-0.5 font-mono">Production runs registered</div>
             </div>
 
-            <div className="p-4 rounded-xl bg-slate-900 border border-slate-800">
+            <div className="p-3.5 rounded-xl bg-slate-900 border border-slate-800">
               <div className="flex items-center justify-between text-xs text-slate-400 mb-1">
-                <span>Completed Runs</span>
+                <span>Completed</span>
                 <CheckCircle2 className="w-4 h-4 text-emerald-400" />
               </div>
               <div className="text-xl sm:text-2xl font-bold font-mono text-emerald-400">{completedPressJobs}</div>
-              <div className="text-[11px] text-emerald-500/80 mt-0.5 font-mono">
-                {totalPressJobs > 0 ? Math.round((completedPressJobs / totalPressJobs) * 100) : 0}% completed
-              </div>
             </div>
 
-            <div className="p-4 rounded-xl bg-slate-900 border border-slate-800">
+            <div className="p-3.5 rounded-xl bg-slate-900 border border-slate-800">
               <div className="flex items-center justify-between text-xs text-slate-400 mb-1">
-                <span>Pending / In Press</span>
+                <span>Pending</span>
                 <Clock className="w-4 h-4 text-amber-400" />
               </div>
               <div className="text-xl sm:text-2xl font-bold font-mono text-amber-400">{pendingPressJobs}</div>
-              <div className="text-[11px] text-amber-500/80 mt-0.5 font-mono">Queued or running</div>
             </div>
 
-            <div className="p-4 rounded-xl bg-slate-900 border border-slate-800">
+            <div className="p-3.5 rounded-xl bg-slate-900 border border-slate-800">
               <div className="flex items-center justify-between text-xs text-slate-400 mb-1">
-                <span>Urgent Press Runs</span>
+                <span>Urgent</span>
                 <Flame className="w-4 h-4 text-rose-400" />
               </div>
               <div className="text-xl sm:text-2xl font-bold font-mono text-rose-400">{urgentPressJobs}</div>
-              <div className="text-[11px] text-rose-500/80 mt-0.5 font-mono">Immediate machine turn</div>
             </div>
           </div>
 
@@ -1428,6 +2320,15 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
               >
                 🔥 Urgent ({urgentPressJobs})
               </button>
+              <button
+                onClick={exportToImage}
+                disabled={isExportingImage}
+                className="px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap bg-amber-950/70 hover:bg-amber-900/70 text-amber-300 border border-amber-800/80 transition-colors cursor-pointer flex items-center gap-1.5 shadow-xs disabled:opacity-50"
+                title="Download styled PNG Press Chart"
+              >
+                <Download className="w-3.5 h-3.5 text-amber-400" />
+                <span>{isExportingImage ? 'Generating...' : 'Download Press Chart'}</span>
+              </button>
             </div>
           </div>
 
@@ -1460,7 +2361,7 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
                     </tr>
                   ) : (
                     filteredPressJobs.map((job) => {
-                      const isCompleted = job.status === 'Completed';
+                      const isCompleted = job.pressStatus === 'Completed';
                       const isUrgent = Boolean(job.isUrgent);
 
                       return (
@@ -1566,29 +2467,125 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
                           </td>
 
                           {/* 8. Actions (Fill / Edit details, Delete) */}
+                          {/* 8. Actions (Detail & 3-Dot Menu) */}
                           <td className="py-3 px-4 text-right whitespace-nowrap">
-                            <div className="flex items-center justify-end gap-1.5">
+                            <div className="flex items-center justify-end gap-1.5 relative">
                               <button
-                                onClick={() => handleOpenEditPressJob(job)}
-                                className="px-2 py-1 text-xs font-semibold text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-lg transition-colors cursor-pointer flex items-center gap-1"
-                                title="Edit details: Board Size, Job Size, Press Name"
+                                type="button"
+                                onClick={() => setDetailPressJob(job)}
+                                className="px-2.5 py-1 text-xs font-semibold text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-lg transition-colors cursor-pointer flex items-center gap-1"
+                                title="Show Press Detail"
                               >
-                                <Edit3 className="w-3 h-3 text-amber-400" />
-                                <span>Fill / Edit</span>
+                                <Eye className="w-3.5 h-3.5 text-amber-400" />
+                                <span>Detail</span>
                               </button>
-                              <button
-                                onClick={() =>
-                                  setDeleteConfirmTarget({
-                                    type: 'job',
-                                    id: job.id,
-                                    name: job.jobName,
-                                  })
-                                }
-                                className="p-1.5 text-slate-400 hover:text-rose-400 hover:bg-rose-950/30 rounded-lg transition-colors cursor-pointer"
-                                title="Delete Press Job"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
+
+                              {/* 3-DOT MENU BUTTON */}
+                              <div className="relative">
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setActiveDropdownMenu(
+                                      activeDropdownMenu?.section === 'press' && activeDropdownMenu?.id === job.id
+                                        ? null
+                                        : { section: 'press', id: job.id }
+                                    );
+                                  }}
+                                  className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
+                                  title="3-Dot Menu: Details & Quick Controls"
+                                >
+                                  <MoreVertical className="w-4 h-4" />
+                                </button>
+
+                                {/* FLOATING 3-DOT DROPDOWN MENU */}
+                                {activeDropdownMenu?.section === 'press' && activeDropdownMenu?.id === job.id && (
+                                  <div 
+                                    onClick={(e) => e.stopPropagation()}
+                                    className="absolute right-0 top-full mt-1 w-56 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl z-40 py-1.5 animate-in fade-in zoom-in-95 duration-100 text-left"
+                                  >
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setActiveDropdownMenu(null);
+                                        setDetailPressJob(job);
+                                      }}
+                                      className="w-full px-3 py-2 text-xs font-semibold text-amber-400 hover:bg-amber-950/40 flex items-center gap-2 cursor-pointer transition-colors"
+                                    >
+                                      <Eye className="w-3.5 h-3.5 text-amber-400" />
+                                      <span>Show Detail</span>
+                                    </button>
+
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setActiveDropdownMenu(null);
+                                        handleTogglePressStatus(job);
+                                      }}
+                                      className="w-full px-3 py-2 text-xs font-medium text-slate-200 hover:text-white hover:bg-slate-800 flex items-center gap-2 cursor-pointer transition-colors"
+                                    >
+                                      <CheckCircle2 className={`w-3.5 h-3.5 ${isCompleted ? 'text-emerald-400' : 'text-slate-400'}`} />
+                                      <span>{isCompleted ? 'Mark Press Pending' : 'Mark Press Completed'}</span>
+                                    </button>
+
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setActiveDropdownMenu(null);
+                                        handleTogglePressUrgent(job);
+                                      }}
+                                      className="w-full px-3 py-2 text-xs font-medium text-slate-200 hover:text-white hover:bg-slate-800 flex items-center gap-2 cursor-pointer transition-colors"
+                                    >
+                                      <Flame className={`w-3.5 h-3.5 ${isUrgent ? 'text-rose-400 fill-rose-400' : 'text-slate-400'}`} />
+                                      <span>{isUrgent ? 'Remove Urgent' : 'Mark Urgent 🔥'}</span>
+                                    </button>
+
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setActiveDropdownMenu(null);
+                                        handleOpenEditPressJob(job);
+                                      }}
+                                      className="w-full px-3 py-2 text-xs font-medium text-slate-200 hover:text-white hover:bg-slate-800 flex items-center gap-2 cursor-pointer transition-colors"
+                                    >
+                                      <Edit3 className="w-3.5 h-3.5 text-amber-400" />
+                                      <span>Edit Press Specs</span>
+                                    </button>
+
+                                    <button
+                                      type="button"
+                                      onClick={async () => {
+                                        setActiveDropdownMenu(null);
+                                        // Mark as Non-Printed and remove from Press Data
+                                        await onUpdateJobDetails(job.id, { isPrinted: false, pressName: '' });
+                                      }}
+                                      className="w-full px-3 py-2 text-xs font-medium text-slate-300 hover:text-white hover:bg-slate-800 flex items-center gap-2 cursor-pointer transition-colors"
+                                      title="Mark as Non-Printed plain kraft board (removes from printing schedule)"
+                                    >
+                                      <FileText className="w-3.5 h-3.5 text-sky-400" />
+                                      <span>Mark Non-Printed (Remove)</span>
+                                    </button>
+
+                                    <div className="my-1 border-t border-slate-800" />
+
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setActiveDropdownMenu(null);
+                                        setDeleteConfirmTarget({
+                                          type: 'job',
+                                          id: job.id,
+                                          name: job.jobName,
+                                        });
+                                      }}
+                                      className="w-full px-3 py-2 text-xs font-medium text-rose-400 hover:bg-rose-950/40 flex items-center gap-2 cursor-pointer transition-colors"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                      <span>Delete Job</span>
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
                             </div>
                           </td>
                         </tr>
@@ -1681,7 +2678,27 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
               {stockAddCategory === 'Die' ? (
                 /* DIE FIELDS: date, job name, job type, die maker, punch type, urgent, received/not received */
                 <>
-                  {/* 1. Job Name (Adding and Selection) */}
+                  {/* Select Existing Job (Auto-fills Job Name and Job Type) */}
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-300 mb-1">
+                      Select Existing Job (Auto-fills)
+                    </label>
+                    <select
+                      value={dieSelectedJobId}
+                      onChange={(e) => handleSelectExistingJobForDie(e.target.value)}
+                      className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-xs text-white focus:outline-none focus:border-purple-500 cursor-pointer"
+                    >
+                      <option value="">-- Select Existing Job --</option>
+                      {jobs.map((j) => (
+                        <option key={j.id} value={j.id}>
+                          {j.jobName} ({j.jobType})
+                        </option>
+                      ))}
+                      <option value="custom">+ Custom / New Job</option>
+                    </select>
+                  </div>
+
+                  {/* 1. Job Name */}
                   <div>
                     <label className="block text-xs font-semibold text-slate-300 mb-1">
                       Job Name <span className="text-amber-400">*</span>
@@ -1689,22 +2706,14 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
                     <input
                       type="text"
                       required
-                      list="plant-die-jobs-list"
                       value={dieJobName}
                       onChange={(e) => setDieJobName(e.target.value)}
-                      placeholder="Select existing job or type new job name..."
+                      placeholder="Job Name..."
                       className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-xs text-white focus:outline-none focus:border-purple-500"
                     />
-                    <datalist id="plant-die-jobs-list">
-                      {jobs.map((j) => (
-                        <option key={j.id} value={j.jobName}>
-                          {j.jobType}
-                        </option>
-                      ))}
-                    </datalist>
                   </div>
 
-                  {/* 2. Job Type (Adding and Selection) */}
+                  {/* 2. Job Type */}
                   <div>
                     <label className="block text-xs font-semibold text-slate-300 mb-1">
                       Job Type <span className="text-amber-400">*</span>
@@ -1715,7 +2724,7 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
                       list="plant-die-jobtypes-list"
                       value={dieJobType}
                       onChange={(e) => setDieJobType(e.target.value)}
-                      placeholder="Select or enter job type..."
+                      placeholder="Job Type..."
                       className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-xs text-white focus:outline-none focus:border-purple-500"
                     />
                     <datalist id="plant-die-jobtypes-list">
@@ -1810,14 +2819,14 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <label className="block text-xs font-semibold text-slate-300 mb-1">
-                        Board / Sheet Size
+                        Board Size
                       </label>
                       <input
                         type="text"
                         value={stockForm.jobSize}
                         onChange={(e) => setStockForm({ ...stockForm, jobSize: e.target.value })}
                         placeholder="e.g. 36 x 52 in"
-                        className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-xs text-white focus:outline-none focus:border-blue-500"
+                        className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-xs text-white focus:outline-none focus:border-blue-500 font-mono"
                       />
                     </div>
                     <div>
@@ -1857,40 +2866,6 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
                 </>
               )}
 
-              {/* Status and Urgent Marking for Both Stock & Die */}
-              <div className="grid grid-cols-2 gap-3 pt-1">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">
-                    Receiving Status
-                  </label>
-                  <select
-                    value={stockForm.status}
-                    onChange={(e) => setStockForm({ ...stockForm, status: e.target.value as any })}
-                    className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-xs text-white focus:outline-none focus:border-blue-500"
-                  >
-                    <option value="Not Received">⏳ Not Received (Pending)</option>
-                    <option value="Received">✅ Received at Factory</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">
-                    Urgent Priority
-                  </label>
-                  <button
-                    type="button"
-                    onClick={() => setStockForm({ ...stockForm, isUrgent: !stockForm.isUrgent })}
-                    className={`w-full py-2 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer ${
-                      stockForm.isUrgent
-                        ? 'bg-rose-500/20 text-rose-300 border border-rose-500/50'
-                        : 'bg-slate-950 text-slate-400 border border-slate-800'
-                    }`}
-                  >
-                    <Flame className={`w-3.5 h-3.5 ${stockForm.isUrgent ? 'text-rose-400' : 'text-slate-500'}`} />
-                    <span>{stockForm.isUrgent ? '🔥 Mark Urgent' : 'Normal Priority'}</span>
-                  </button>
-                </div>
-              </div>
 
               {/* Notes */}
               <div>
@@ -1961,11 +2936,12 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">Board / Sheet Size</label>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">Board Size</label>
                   <input
                     type="text"
                     value={stockForm.jobSize}
                     onChange={(e) => setStockForm({ ...stockForm, jobSize: e.target.value })}
+                    placeholder="e.g. 36 x 52 in"
                     className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-xs text-white font-mono"
                   />
                 </div>
@@ -2240,28 +3216,45 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
                 />
               </div>
 
-              {/* BOARD SIZE: Same as Board Ordered for Job */}
+              {/* BOARD SIZE: Editable with auto-sync from linked stock */}
               <div>
-                <label className="block text-xs font-semibold text-amber-300 mb-1">
-                  Board Size (Same as Board Ordered for Job)
-                </label>
-                <div className="w-full px-3 py-2 bg-slate-950 border border-amber-500/30 rounded-xl text-xs text-amber-300 font-mono font-bold flex items-center justify-between">
-                  <span>{getLinkedBoardSize(editingPressJob)}</span>
-                  <span className="text-[10px] text-slate-500 font-sans">Locked</span>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-xs font-semibold text-amber-300">
+                    Board Size (From Ordered Stock)
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!editingPressJob) return;
+                      const linked = getLinkedBoardSize(editingPressJob);
+                      if (linked && linked !== 'Not Ordered Yet') {
+                        setPressForm((prev) => ({ ...prev, boardSize: linked }));
+                      }
+                    }}
+                    className="text-[11px] text-amber-400 hover:text-amber-300 font-semibold cursor-pointer underline decoration-dotted"
+                  >
+                    Sync from Stock Order
+                  </button>
                 </div>
+                <input
+                  type="text"
+                  value={pressForm.boardSize}
+                  onChange={(e) => setPressForm({ ...pressForm, boardSize: e.target.value })}
+                  placeholder="e.g. 1200 x 850 mm"
+                  className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-xs text-white font-mono focus:outline-none focus:border-amber-500"
+                />
               </div>
 
-              {/* JOB SIZE: Only give option for Job Size */}
+              {/* JOB SIZE: Optional final job cut/print dimensions */}
               <div>
                 <label className="block text-xs font-semibold text-sky-300 mb-1">
-                  Job Size (e.g. 30 x 45 in) <span className="text-amber-400">*</span>
+                  Job Size (e.g. 30 x 45 in)
                 </label>
                 <input
                   type="text"
-                  required
                   value={pressForm.jobSize}
                   onChange={(e) => setPressForm({ ...pressForm, jobSize: e.target.value })}
-                  placeholder="Enter final job size..."
+                  placeholder="Enter final cut or die size..."
                   className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-xs text-white font-mono focus:outline-none focus:border-sky-500"
                 />
               </div>
@@ -2269,16 +3262,15 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
               {/* PRESS NAME TO BE FILLED */}
               <div>
                 <label className="block text-xs font-semibold text-slate-300 mb-1">
-                  Press Name
+                  Assigned Press Name
                 </label>
                 <input
                   type="text"
-                  required
                   list="press-edit-datalist"
                   value={pressForm.pressName}
                   onChange={(e) => setPressForm({ ...pressForm, pressName: e.target.value })}
                   placeholder="e.g. Flexo Press 1 (4-Color), Heidelberg..."
-                  className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-xs text-white"
+                  className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-xs text-white focus:outline-none focus:border-amber-500"
                 />
                 <datalist id="press-edit-datalist">
                   {availablePresses.map((p) => (
@@ -2377,6 +3369,516 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
           </div>
         </div>
       )}
+
+      {/* =================================================================== */}
+      {/* 3-DOT DETAIL MODAL 1: BOARD STOCK ITEM DETAIL */}
+      {/* =================================================================== */}
+      {detailStockItem && (() => {
+        const item = detailStockItem;
+        const isReceived = item.status === 'Received';
+        const isUrgent = Boolean(item.isUrgent);
+
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-150">
+            <div className="w-full max-w-lg bg-slate-900 border border-slate-750 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+              {/* Header */}
+              <div className="px-6 py-4 border-b border-slate-800 bg-slate-950/70 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-xl bg-blue-500/15 text-blue-400 border border-blue-500/30 flex items-center justify-center">
+                    <Layers className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-bold text-white">Board Stock Inventory Detail</h3>
+                    <p className="text-xs text-slate-400">Spec details, receiving status & priority</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setDetailStockItem(null)}
+                  className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition-colors cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Body */}
+              <div className="p-6 space-y-5 overflow-y-auto">
+                {/* Status & Urgent Bar */}
+                <div className="flex items-center justify-between p-3 rounded-xl bg-slate-950 border border-slate-800">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-slate-400">Receiving Status:</span>
+                    <span className={`px-2.5 py-1 rounded-lg text-xs font-bold font-mono border ${
+                      isReceived
+                        ? 'bg-emerald-950 text-emerald-300 border-emerald-800'
+                        : 'bg-amber-950 text-amber-300 border-amber-800'
+                    }`}>
+                      {isReceived ? '✅ Received' : '⏳ Not Received'}
+                    </span>
+                  </div>
+
+                  {isUrgent && (
+                    <span className="px-2.5 py-1 rounded-lg text-xs font-bold bg-rose-500/20 text-rose-300 border border-rose-500/30 flex items-center gap-1">
+                      <Flame className="w-3.5 h-3.5 fill-rose-400" />
+                      <span>URGENT</span>
+                    </span>
+                  )}
+                </div>
+
+                {/* Specs Box */}
+                <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-3 text-xs">
+                  <div className="flex items-center justify-between border-b border-slate-850 pb-2">
+                    <span className="text-slate-400 font-medium">Stock / Paper Type:</span>
+                    <span className="font-bold text-white text-sm">{item.stockType}</span>
+                  </div>
+                  <div className="flex items-center justify-between border-b border-slate-850 pb-2">
+                    <span className="text-slate-400 font-medium">Board Size:</span>
+                    <span className="font-mono font-bold text-amber-300">{item.jobSize || 'Standard'}</span>
+                  </div>
+                  <div className="flex items-center justify-between border-b border-slate-850 pb-2">
+                    <span className="text-slate-400 font-medium">Quantity:</span>
+                    <span className="font-mono font-bold text-sky-400">{Number(item.quantity).toLocaleString()} units</span>
+                  </div>
+                  <div className="flex items-center justify-between border-b border-slate-850 pb-2">
+                    <span className="text-slate-400 font-medium">Supplier (From):</span>
+                    <span className="font-semibold text-slate-200">{item.receivingFrom || 'Unspecified'}</span>
+                  </div>
+                  <div className="flex items-center justify-between border-b border-slate-850 pb-2">
+                    <span className="text-slate-400 font-medium">Linked Job:</span>
+                    <span className="font-semibold text-amber-400">{item.jobName || 'Stock Buffer (Unlinked)'}</span>
+                  </div>
+                  <div className="flex items-center justify-between border-b border-slate-850 pb-2">
+                    <span className="text-slate-400 font-medium">Print Specification:</span>
+                    <span className={`px-2 py-0.5 rounded text-[11px] font-semibold ${
+                      item.isPrinted
+                        ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                        : 'bg-slate-800 text-slate-300'
+                    }`}>
+                      {item.isPrinted ? `Printed (${item.pressName || 'Press Assigned'})` : 'Non-Printed (Plain Kraft)'}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-400 font-medium">Order Date:</span>
+                    <span className="font-mono text-slate-300">{item.orderedAt || '—'}</span>
+                  </div>
+                  {item.notes && (
+                    <div className="pt-2 border-t border-slate-850">
+                      <span className="text-slate-400 block mb-0.5">Notes:</span>
+                      <p className="text-slate-300 italic">{item.notes}</p>
+                    </div>
+                  )}
+                </div>
+
+                {/* Quick Action Buttons */}
+                <div className="space-y-2.5">
+                  <div className="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-blue-400" />
+                    <span>Quick Status Controls</span>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      await handleToggleStockReceived(item);
+                      setDetailStockItem({ ...item, status: isReceived ? 'Not Received' : 'Received' });
+                    }}
+                    className={`w-full p-3 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-between border shadow-sm ${
+                      isReceived
+                        ? 'bg-emerald-950/60 text-emerald-300 border-emerald-600 hover:bg-emerald-900/60'
+                        : 'bg-amber-500 hover:bg-amber-400 text-slate-950 border-amber-400'
+                    }`}
+                  >
+                    <span>{isReceived ? 'Status: Received ✅' : 'Status: Not Received ⏳'}</span>
+                    <span className="underline font-mono text-[11px]">
+                      {isReceived ? 'Click to Mark Not Received' : 'Click to Mark Received'}
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      await handleToggleStockUrgent(item);
+                      setDetailStockItem({ ...item, isUrgent: !isUrgent });
+                    }}
+                    className={`w-full p-3 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-between border shadow-sm ${
+                      isUrgent
+                        ? 'bg-rose-950/60 text-rose-300 border-rose-600 hover:bg-rose-900/60'
+                        : 'bg-slate-950 hover:bg-slate-800 text-slate-300 border-slate-800'
+                    }`}
+                  >
+                    <span>{isUrgent ? 'Priority: Urgent 🔥' : 'Priority: Normal'}</span>
+                    <span className="underline font-mono text-[11px]">
+                      {isUrgent ? 'Click to Remove Urgent' : 'Click to Mark Urgent 🔥'}
+                    </span>
+                  </button>
+
+                  <p className="text-[11px] text-slate-500 italic text-center">
+                    Note: Marking stock received updates inventory and does not automatically complete the main factory job.
+                  </p>
+                </div>
+              </div>
+
+              {/* Footer */}
+              <div className="px-6 py-3.5 bg-slate-950 border-t border-slate-800 flex items-center justify-between">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const it = detailStockItem;
+                    setDetailStockItem(null);
+                    handleOpenEditStock(it);
+                  }}
+                  className="px-3.5 py-1.5 text-xs font-semibold text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-lg transition-colors cursor-pointer flex items-center gap-1.5"
+                >
+                  <Edit3 className="w-3.5 h-3.5 text-amber-400" />
+                  <span>Edit Specs</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setDetailStockItem(null)}
+                  className="px-4 py-1.5 text-xs font-semibold text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-lg transition-colors cursor-pointer"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* =================================================================== */}
+      {/* 3-DOT DETAIL MODAL 2: DIE TOOLING ORDER DETAIL */}
+      {/* =================================================================== */}
+      {detailDieItem && (() => {
+        const item = detailDieItem;
+        const isReceived = item.status === 'Received';
+        const isUrgent = Boolean(item.isUrgent);
+
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-150">
+            <div className="w-full max-w-lg bg-slate-900 border border-slate-750 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+              {/* Header */}
+              <div className="px-6 py-4 border-b border-slate-800 bg-slate-950/70 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-xl bg-purple-500/15 text-purple-400 border border-purple-500/30 flex items-center justify-center">
+                    <Scissors className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-bold text-white">Die Tooling Order Detail</h3>
+                    <p className="text-xs text-slate-400">Maker, punch specifications & receiving status</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setDetailDieItem(null)}
+                  className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition-colors cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Body */}
+              <div className="p-6 space-y-5 overflow-y-auto">
+                {/* Status Bar */}
+                <div className="flex items-center justify-between p-3 rounded-xl bg-slate-950 border border-slate-800">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-slate-400">Receiving Status:</span>
+                    <span className={`px-2.5 py-1 rounded-lg text-xs font-bold font-mono border ${
+                      isReceived
+                        ? 'bg-emerald-950 text-emerald-300 border-emerald-800'
+                        : 'bg-amber-950 text-amber-300 border-amber-800'
+                    }`}>
+                      {isReceived ? '✅ Received' : '⏳ Not Received'}
+                    </span>
+                  </div>
+
+                  {isUrgent && (
+                    <span className="px-2.5 py-1 rounded-lg text-xs font-bold bg-rose-500/20 text-rose-300 border border-rose-500/30 flex items-center gap-1">
+                      <Flame className="w-3.5 h-3.5 fill-rose-400" />
+                      <span>URGENT</span>
+                    </span>
+                  )}
+                </div>
+
+                {/* Specs Box */}
+                <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-3 text-xs">
+                  <div className="flex items-center justify-between border-b border-slate-850 pb-2">
+                    <span className="text-slate-400 font-medium">Job Name:</span>
+                    <span className="font-bold text-white text-sm">{item.jobName || 'Unassigned'}</span>
+                  </div>
+                  <div className="flex items-center justify-between border-b border-slate-850 pb-2">
+                    <span className="text-slate-400 font-medium">Job Type:</span>
+                    <span className="font-semibold text-amber-400">{item.jobType || 'General Corrugation'}</span>
+                  </div>
+                  <div className="flex items-center justify-between border-b border-slate-850 pb-2">
+                    <span className="text-slate-400 font-medium">Die Maker:</span>
+                    <span className="font-semibold text-purple-300">{item.dieMaker || item.receivingFrom || 'Apex Laser Dies'}</span>
+                  </div>
+                  <div className="flex items-center justify-between border-b border-slate-850 pb-2">
+                    <span className="text-slate-400 font-medium">Punch Type:</span>
+                    <span className="font-mono font-bold text-white">{item.punchType || item.jobSize || 'Rotary Die Punch'}</span>
+                  </div>
+                  <div className="flex items-center justify-between border-b border-slate-850 pb-2">
+                    <span className="text-slate-400 font-medium">Quantity:</span>
+                    <span className="font-mono font-bold text-white">{item.quantity} tool(s)</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-400 font-medium">Order Date:</span>
+                    <span className="font-mono text-slate-300">{item.orderedAt || '—'}</span>
+                  </div>
+                  {item.notes && (
+                    <div className="pt-2 border-t border-slate-850">
+                      <span className="text-slate-400 block mb-0.5">Notes:</span>
+                      <p className="text-slate-300 italic">{item.notes}</p>
+                    </div>
+                  )}
+                </div>
+
+                {/* Quick Action Buttons */}
+                <div className="space-y-2.5">
+                  <div className="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-purple-400" />
+                    <span>Quick Status Controls</span>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      await handleToggleDieReceived(item);
+                      setDetailDieItem({ ...item, status: isReceived ? 'Not Received' : 'Received' });
+                    }}
+                    className={`w-full p-3 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-between border shadow-sm ${
+                      isReceived
+                        ? 'bg-emerald-950/60 text-emerald-300 border-emerald-600 hover:bg-emerald-900/60'
+                        : 'bg-amber-500 hover:bg-amber-400 text-slate-950 border-amber-400'
+                    }`}
+                  >
+                    <span>{isReceived ? 'Status: Received ✅' : 'Status: Not Received ⏳'}</span>
+                    <span className="underline font-mono text-[11px]">
+                      {isReceived ? 'Click to Mark Not Received' : 'Click to Mark Received'}
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      await handleToggleDieUrgent(item);
+                      setDetailDieItem({ ...item, isUrgent: !isUrgent });
+                    }}
+                    className={`w-full p-3 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-between border shadow-sm ${
+                      isUrgent
+                        ? 'bg-rose-950/60 text-rose-300 border-rose-600 hover:bg-rose-900/60'
+                        : 'bg-slate-950 hover:bg-slate-800 text-slate-300 border-slate-800'
+                    }`}
+                  >
+                    <span>{isUrgent ? 'Priority: Urgent 🔥' : 'Priority: Normal'}</span>
+                    <span className="underline font-mono text-[11px]">
+                      {isUrgent ? 'Click to Remove Urgent' : 'Click to Mark Urgent 🔥'}
+                    </span>
+                  </button>
+
+                  <p className="text-[11px] text-slate-500 italic text-center">
+                    Note: Receiving die tooling updates the tool inventory and does not complete the main factory job.
+                  </p>
+                </div>
+              </div>
+
+              {/* Footer */}
+              <div className="px-6 py-3.5 bg-slate-950 border-t border-slate-800 flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => setDetailDieItem(null)}
+                  className="px-4 py-1.5 text-xs font-semibold text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-lg transition-colors cursor-pointer"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* =================================================================== */}
+      {/* 3-DOT DETAIL MODAL 3: PRESS OPERATIONS DETAIL */}
+      {/* =================================================================== */}
+      {detailPressJob && (() => {
+        const job = detailPressJob;
+        const isCompleted = job.pressStatus === 'Completed';
+        const isUrgent = Boolean(job.isUrgent);
+        const linkedBoard = getLinkedBoardSize(job);
+
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-150">
+            <div className="w-full max-w-lg bg-slate-900 border border-slate-750 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+              {/* Header */}
+              <div className="px-6 py-4 border-b border-slate-800 bg-slate-950/70 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-xl bg-amber-500/15 text-amber-400 border border-amber-500/30 flex items-center justify-center">
+                    <Printer className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-bold text-white">Press Production Detail</h3>
+                    <p className="text-xs text-slate-400">Machine, dimensions & press run completion</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setDetailPressJob(null)}
+                  className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition-colors cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Body */}
+              <div className="p-6 space-y-5 overflow-y-auto">
+                {/* Press Status Bar */}
+                <div className="flex items-center justify-between p-3 rounded-xl bg-slate-950 border border-slate-800">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-slate-400">Press Stage Status:</span>
+                    <span className={`px-2.5 py-1 rounded-lg text-xs font-bold font-mono border ${
+                      isCompleted
+                        ? 'bg-emerald-950 text-emerald-300 border-emerald-800'
+                        : 'bg-amber-950 text-amber-300 border-amber-800'
+                    }`}>
+                      {isCompleted ? '✅ Press Completed' : '⏳ Press Pending'}
+                    </span>
+                  </div>
+
+                  {isUrgent && (
+                    <span className="px-2.5 py-1 rounded-lg text-xs font-bold bg-rose-500/20 text-rose-300 border border-rose-500/30 flex items-center gap-1">
+                      <Flame className="w-3.5 h-3.5 fill-rose-400" />
+                      <span>URGENT</span>
+                    </span>
+                  )}
+                </div>
+
+                {/* Specs Box */}
+                <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-3 text-xs">
+                  <div className="flex items-center justify-between border-b border-slate-850 pb-2">
+                    <span className="text-slate-400 font-medium">Job Name:</span>
+                    <span className="font-bold text-white text-sm">{job.jobName}</span>
+                  </div>
+                  <div className="flex items-center justify-between border-b border-slate-850 pb-2">
+                    <span className="text-slate-400 font-medium">Assigned Press:</span>
+                    <span className="font-semibold text-amber-400">{job.pressName || 'Not Assigned'}</span>
+                  </div>
+                  <div className="flex items-center justify-between border-b border-slate-850 pb-2">
+                    <span className="text-slate-400 font-medium">Board Size:</span>
+                    <span className="font-mono font-bold text-amber-300">{linkedBoard}</span>
+                  </div>
+                  <div className="flex items-center justify-between border-b border-slate-850 pb-2">
+                    <span className="text-slate-400 font-medium">Job Size:</span>
+                    <span className="font-mono font-bold text-sky-400">{job.jobSize || '—'}</span>
+                  </div>
+                  <div className="flex items-center justify-between border-b border-slate-850 pb-2">
+                    <span className="text-slate-400 font-medium">Job Type:</span>
+                    <span className="font-semibold text-slate-200">{job.jobType}</span>
+                  </div>
+                  <div className="flex items-center justify-between border-b border-slate-850 pb-2">
+                    <span className="text-slate-400 font-medium">Line Placement:</span>
+                    <span className="font-semibold text-slate-200">{job.jobPlacement} Line</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-400 font-medium">Job Created:</span>
+                    <span className="font-mono text-slate-300">{job.createdAt || '—'}</span>
+                  </div>
+                  {job.notes && (
+                    <div className="pt-2 border-t border-slate-850">
+                      <span className="text-slate-400 block mb-0.5">Notes:</span>
+                      <p className="text-slate-300 italic">{job.notes}</p>
+                    </div>
+                  )}
+                </div>
+
+                {/* Quick Action Buttons */}
+                <div className="space-y-2.5">
+                  <div className="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
+                    <Printer className="w-3.5 h-3.5 text-amber-400" />
+                    <span>Quick Press Run Controls</span>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      await handleTogglePressStatus(job);
+                      setDetailPressJob({ ...job, pressStatus: isCompleted ? 'Pending' : 'Completed' });
+                    }}
+                    className={`w-full p-3 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-between border shadow-sm ${
+                      isCompleted
+                        ? 'bg-emerald-950/60 text-emerald-300 border-emerald-600 hover:bg-emerald-900/60'
+                        : 'bg-amber-500 hover:bg-amber-400 text-slate-950 border-amber-400'
+                    }`}
+                  >
+                    <span>{isCompleted ? 'Press Run: Completed ✅' : 'Press Run: Pending ⏳'}</span>
+                    <span className="underline font-mono text-[11px]">
+                      {isCompleted ? 'Click to Mark Pending' : 'Click to Mark Completed'}
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      await handleTogglePressUrgent(job);
+                      setDetailPressJob({ ...job, isUrgent: !isUrgent });
+                    }}
+                    className={`w-full p-3 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-between border shadow-sm ${
+                      isUrgent
+                        ? 'bg-rose-950/60 text-rose-300 border-rose-600 hover:bg-rose-900/60'
+                        : 'bg-slate-950 hover:bg-slate-800 text-slate-300 border-slate-800'
+                    }`}
+                  >
+                    <span>{isUrgent ? 'Priority: Urgent 🔥' : 'Priority: Normal'}</span>
+                    <span className="underline font-mono text-[11px]">
+                      {isUrgent ? 'Click to Remove Urgent' : 'Click to Mark Urgent 🔥'}
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      setDetailPressJob(null);
+                      // Mark as Non-Printed and remove from Press Data
+                      await onUpdateJobDetails(job.id, { isPrinted: false, pressName: '' });
+                    }}
+                    className="w-full p-2.5 rounded-xl text-xs font-semibold bg-slate-950 hover:bg-slate-800 text-sky-400 border border-slate-800 hover:border-slate-700 transition-colors cursor-pointer flex items-center justify-center gap-2"
+                  >
+                    <FileText className="w-3.5 h-3.5" />
+                    <span>Convert to Non-Printed Job (Remove from Press Schedule)</span>
+                  </button>
+
+                  <p className="text-[11px] text-slate-500 italic text-center">
+                    Press completion is independent and will never automatically mark the main factory job as completed.
+                  </p>
+                </div>
+              </div>
+
+              {/* Footer */}
+              <div className="px-6 py-3.5 bg-slate-950 border-t border-slate-800 flex items-center justify-between">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const j = detailPressJob;
+                    setDetailPressJob(null);
+                    handleOpenEditPressJob(j);
+                  }}
+                  className="px-3.5 py-1.5 text-xs font-semibold text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-lg transition-colors cursor-pointer flex items-center gap-1.5"
+                >
+                  <Edit3 className="w-3.5 h-3.5 text-amber-400" />
+                  <span>Edit Press Specs</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setDetailPressJob(null)}
+                  className="px-4 py-1.5 text-xs font-semibold text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-lg transition-colors cursor-pointer"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
     </div>
   );

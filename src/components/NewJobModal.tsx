@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { X, Plus, Search, Factory, Building2, Check, ChevronDown, Tag, Trash2 } from 'lucide-react';
+import { X, Plus, Search, Factory, Building2, Check, ChevronDown, Tag, Trash2, Printer, FileText } from 'lucide-react';
 import { CorrugationJob, JobPlacement } from '../types/job';
 
 interface NewJobModalProps {
@@ -22,6 +22,7 @@ export const NewJobModal: React.FC<NewJobModalProps> = ({
   const [jobName, setJobName] = useState('');
   const [selectedType, setSelectedType] = useState<string>('');
   const [placement, setPlacement] = useState<JobPlacement>('Factory');
+  const [isPrinted, setIsPrinted] = useState<boolean>(false);
   const [notes, setNotes] = useState('');
   const [jobDate, setJobDate] = useState(() => new Date().toISOString().split('T')[0]);
   
@@ -87,6 +88,7 @@ export const NewJobModal: React.FC<NewJobModalProps> = ({
       jobName: jobName.trim(),
       jobType: selectedType.trim(),
       jobPlacement: placement,
+      isPrinted,
       notes: notes.trim() || undefined,
       createdAt: `${jobDate} 12:00`,
     } as any);
@@ -95,6 +97,7 @@ export const NewJobModal: React.FC<NewJobModalProps> = ({
     setJobName('');
     setSelectedType('');
     setPlacement('Factory');
+    setIsPrinted(false);
     setNotes('');
     setErrorMessage('');
     onClose();
@@ -349,6 +352,54 @@ export const NewJobModal: React.FC<NewJobModalProps> = ({
                 <div>
                   <div className="text-xs font-bold text-white">Office</div>
                   <div className="text-[10px] text-slate-400">Admin, billing, estimation & dispatch</div>
+                </div>
+              </button>
+            </div>
+          </div>
+
+          {/* 4. Print Specification (Non-Printed vs Printed) */}
+          <div>
+            <label className="block text-xs font-semibold text-slate-200 mb-1.5">
+              Print Specification <span className="text-amber-400">*</span>
+            </label>
+            <div className="grid grid-cols-2 gap-3">
+              <button
+                type="button"
+                onClick={() => setIsPrinted(false)}
+                className={`p-3.5 rounded-xl border text-left transition-all cursor-pointer flex items-center gap-3 ${
+                  !isPrinted
+                    ? 'bg-amber-500/10 border-amber-500 text-white shadow-sm'
+                    : 'bg-slate-950 border-slate-800 text-slate-400 hover:border-slate-700'
+                }`}
+              >
+                <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
+                  !isPrinted ? 'bg-amber-500 text-slate-950 font-bold' : 'bg-slate-800 text-slate-400'
+                }`}>
+                  <FileText className="w-4 h-4" />
+                </div>
+                <div>
+                  <div className="text-xs font-bold text-white">Non-Printed</div>
+                  <div className="text-[10px] text-slate-400">Plain Kraft / No press needed</div>
+                </div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setIsPrinted(true)}
+                className={`p-3.5 rounded-xl border text-left transition-all cursor-pointer flex items-center gap-3 ${
+                  isPrinted
+                    ? 'bg-amber-500/10 border-amber-500 text-white shadow-sm'
+                    : 'bg-slate-950 border-slate-800 text-slate-400 hover:border-slate-700'
+                }`}
+              >
+                <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
+                  isPrinted ? 'bg-amber-500 text-slate-950 font-bold' : 'bg-slate-800 text-slate-400'
+                }`}>
+                  <Printer className="w-4 h-4" />
+                </div>
+                <div>
+                  <div className="text-xs font-bold text-white">Printed</div>
+                  <div className="text-[10px] text-slate-400">Requires press allocation</div>
                 </div>
               </button>
             </div>

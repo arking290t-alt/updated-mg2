@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Package, 
   Search, 
@@ -10,7 +10,13 @@ import {
   Trash2, 
   Briefcase,
   Layers,
-  CheckCircle2
+  CheckCircle2,
+  Calendar,
+  X,
+  MoreVertical,
+  Eye,
+  Flame,
+  Scissors
 } from 'lucide-react';
 import { InventoryItem } from '../types/job';
 
@@ -18,16 +24,31 @@ interface ExistingInventoryViewProps {
   inventory: InventoryItem[];
   onOpenOrderModal: () => void;
   onDeleteInventory: (itemId: string) => void;
+  onUpdateInventoryDetails?: (itemId: string, updates: Partial<InventoryItem>) => Promise<void>;
 }
 
 export const ExistingInventoryView: React.FC<ExistingInventoryViewProps> = ({
   inventory,
   onOpenOrderModal,
   onDeleteInventory,
+  onUpdateInventoryDetails,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
+  const [dateFilter, setDateFilter] = useState('');
   const [printFilter, setPrintFilter] = useState<'All' | 'Printed' | 'Non-Printed'>('All');
   const [deleteConfirmItem, setDeleteConfirmItem] = useState<InventoryItem | null>(null);
+  const [activeDropdownId, setActiveDropdownId] = useState<string | null>(null);
+  const [detailItem, setDetailItem] = useState<InventoryItem | null>(null);
+
+  useEffect(() => {
+    const handleClose = () => setActiveDropdownId(null);
+    if (activeDropdownId) {
+      window.addEventListener('click', handleClose);
+    }
+    return () => window.removeEventListener('click', handleClose);
+  }, [activeDropdownId]);
+
+  const todayIso = new Date().toISOString().split('T')[0];
 
   const filteredItems = inventory.filter((item) => {
     const matchesSearch =
@@ -44,86 +65,127 @@ export const ExistingInventoryView: React.FC<ExistingInventoryViewProps> = ({
         ? item.isPrinted
         : !item.isPrinted;
 
+    if (dateFilter) {
+      const itemDate = (item.orderedAt || '').split(' ')[0];
+      if (itemDate !== dateFilter) return false;
+    }
+
     return matchesSearch && matchesPrint;
   });
 
-  const totalQuantity = inventory.reduce((acc, i) => acc + i.quantity, 0);
+  const totalQuantity = inventory.reduce((acc, i) => acc + (Number(i.quantity) || 0), 0);
   const printedCount = inventory.filter((i) => i.isPrinted).length;
   const nonPrintedCount = inventory.filter((i) => !i.isPrinted).length;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-800">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-800">
         <div>
-          <div className="flex items-center gap-2 mb-1">
-            <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
-            <span className="text-xs font-mono text-emerald-400 uppercase tracking-wide">Warehouse Registry</span>
-          </div>
           <h2 className="text-xl font-bold text-white tracking-tight">Existing Inventory</h2>
+          <span className="text-xs text-slate-400">Total lots in registry: {inventory.length}</span>
         </div>
 
         <button
           onClick={onOpenOrderModal}
-          className="px-4 py-2 text-xs font-bold text-slate-950 bg-amber-500 hover:bg-amber-400 active:bg-amber-600 rounded-xl flex items-center gap-1.5 transition-colors cursor-pointer shadow-md self-start sm:self-auto"
+          className="px-3.5 py-2 text-xs font-bold text-slate-950 bg-amber-500 hover:bg-amber-400 active:bg-amber-600 rounded-xl flex items-center gap-1.5 transition-colors cursor-pointer shadow-md self-start sm:self-auto"
         >
           <Plus className="w-4 h-4 stroke-[2.5]" />
-          <span>Order More Inventory</span>
+          <span>+ Order Inventory</span>
         </button>
       </div>
 
-      {/* KPI Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <div className="p-4 rounded-xl bg-slate-900 border border-slate-800">
-          <span className="text-xs text-slate-400 block">Total Inventory Lots</span>
-          <div className="mt-1 text-2xl font-bold font-mono text-white tabular-nums">
-            {inventory.length} Stock Batches
+      {/* KPI Cards (Clean, no extra verbose descriptions) */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div className="p-3.5 rounded-xl bg-slate-900 border border-slate-800">
+          <span className="text-xs text-slate-400 block mb-1">Total Inventory Lots</span>
+          <div className="text-2xl font-bold font-mono text-white tabular-nums">
+            {inventory.length}
           </div>
-          <span className="text-xs text-slate-400 mt-1 block font-mono">
-            Total Qty: {totalQuantity.toLocaleString()}
+          <span className="text-xs text-slate-400 font-mono mt-0.5 block">
+            {totalQuantity.toLocaleString()} total units
           </span>
         </div>
 
-        <div className="p-4 rounded-xl bg-slate-900 border border-slate-800">
-          <span className="text-xs text-slate-400 block">Printed Stock Orders</span>
-          <div className="mt-1 text-2xl font-bold font-mono text-amber-400 tabular-nums">
-            {printedCount} Lots
+        <div className="p-3.5 rounded-xl bg-slate-900 border border-slate-800">
+          <span className="text-xs text-slate-400 block mb-1">Printed Stock</span>
+          <div className="text-2xl font-bold font-mono text-amber-400 tabular-nums">
+            {printedCount}
           </div>
-          <span className="text-xs text-slate-400 mt-1 block">Allocated to Flexo / Die presses</span>
         </div>
 
-        <div className="p-4 rounded-xl bg-slate-900 border border-slate-800">
-          <span className="text-xs text-slate-400 block">Non-Printed Stock</span>
-          <div className="mt-1 text-2xl font-bold font-mono text-blue-400 tabular-nums">
-            {nonPrintedCount} Lots
+        <div className="p-3.5 rounded-xl bg-slate-900 border border-slate-800">
+          <span className="text-xs text-slate-400 block mb-1">Non-Printed Stock</span>
+          <div className="text-2xl font-bold font-mono text-blue-400 tabular-nums">
+            {nonPrintedCount}
           </div>
-          <span className="text-xs text-slate-400 mt-1 block">Plain fluting and raw Kraft liners</span>
         </div>
       </div>
 
-      {/* Search & Filter Bar */}
-      <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-center">
-        <div className="md:col-span-6 relative">
-          <Search className="w-4 h-4 text-slate-500 absolute left-3.5 top-3" />
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search stock type, job size, receiving vendor, press, or job..."
-            className="w-full pl-10 pr-4 py-2 bg-slate-900 border border-slate-800 rounded-xl text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-amber-500"
-          />
+      {/* Search, Date Filter & Print Type Filter Bar */}
+      <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-2.5">
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 flex-1 max-w-2xl">
+          <div className="relative flex-1">
+            <Search className="w-4 h-4 text-slate-500 absolute left-3 top-2.5" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search stock, size, vendor, or job..."
+              className="w-full pl-9 pr-3 py-2 bg-slate-900 border border-slate-800 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500"
+            />
+            {searchQuery && (
+              <button
+                onClick={() => setSearchQuery('')}
+                className="absolute right-2.5 top-2.5 text-slate-400 hover:text-white"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+
+          {/* Date Filter */}
+          <div className="flex items-center gap-1.5 bg-slate-900 border border-slate-800 rounded-xl px-2.5 py-1.5 text-xs shrink-0">
+            <Calendar className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+            <span className="text-[11px] text-slate-400 font-medium">Date:</span>
+            <input
+              type="date"
+              value={dateFilter}
+              onChange={(e) => setDateFilter(e.target.value)}
+              className="bg-transparent text-white text-xs focus:outline-none [color-scheme:dark] cursor-pointer"
+            />
+            {dateFilter ? (
+              <button
+                type="button"
+                onClick={() => setDateFilter('')}
+                title="Clear date filter"
+                className="text-slate-400 hover:text-white p-0.5 rounded cursor-pointer"
+              >
+                <X className="w-3 h-3" />
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setDateFilter(todayIso)}
+                className="text-[10px] text-amber-400 hover:text-amber-300 font-semibold px-1.5 py-0.5 rounded bg-amber-950/40 border border-amber-800/40 cursor-pointer"
+              >
+                Today
+              </button>
+            )}
+          </div>
         </div>
 
-        <div className="md:col-span-6 flex items-center justify-start md:justify-end gap-1.5 p-1 bg-slate-900 border border-slate-800 rounded-xl w-fit md:ml-auto">
+        {/* Print Type Filter Tabs */}
+        <div className="flex items-center gap-1 overflow-x-auto pb-1 sm:pb-0">
           {(['All', 'Printed', 'Non-Printed'] as const).map((filter) => (
             <button
               key={filter}
               onClick={() => setPrintFilter(filter)}
-              className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors cursor-pointer ${
+              className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors cursor-pointer ${
                 printFilter === filter
                   ? 'bg-amber-500 text-slate-950 font-bold'
-                  : 'text-slate-400 hover:text-white'
+                  : 'bg-slate-900 text-slate-400 hover:text-white border border-slate-800'
               }`}
             >
               {filter}
@@ -185,7 +247,7 @@ export const ExistingInventoryView: React.FC<ExistingInventoryViewProps> = ({
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 sm:gap-4 text-xs font-mono text-slate-300">
                   <div className="flex items-center gap-1.5">
                     <Maximize2 className="w-3.5 h-3.5 text-slate-500" />
-                    <span>Size: <strong className="text-white">{item.jobSize}</strong></span>
+                    <span>Board Size: <strong className="text-white">{item.jobSize}</strong></span>
                   </div>
 
                   <div className="flex items-center gap-1.5">
@@ -215,13 +277,80 @@ export const ExistingInventoryView: React.FC<ExistingInventoryViewProps> = ({
                   </span>
                 </div>
 
-                <button
-                  onClick={() => setDeleteConfirmItem(item)}
-                  title="Remove inventory record"
-                  className="p-2 text-slate-500 hover:text-rose-400 hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
+                <div className="flex items-center gap-1.5 relative">
+                  <button
+                    type="button"
+                    onClick={() => setDetailItem(item)}
+                    className="px-2.5 py-1 text-xs font-semibold text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-lg transition-colors cursor-pointer flex items-center gap-1"
+                    title="Show Detail"
+                  >
+                    <Eye className="w-3.5 h-3.5 text-amber-400" />
+                    <span>Detail</span>
+                  </button>
+
+                  {/* 3-DOT BUTTON */}
+                  <div className="relative">
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setActiveDropdownId(activeDropdownId === item.id ? null : item.id);
+                      }}
+                      className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
+                      title="More options"
+                    >
+                      <MoreVertical className="w-4 h-4" />
+                    </button>
+
+                    {/* DROPDOWN */}
+                    {activeDropdownId === item.id && (
+                      <div 
+                        onClick={(e) => e.stopPropagation()}
+                        className="absolute right-0 top-full mt-1 w-48 bg-slate-900 border border-slate-750 rounded-xl shadow-2xl z-30 py-1.5 animate-in fade-in zoom-in-95 duration-100 text-left"
+                      >
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setActiveDropdownId(null);
+                            setDetailItem(item);
+                          }}
+                          className="w-full px-3 py-2 text-xs font-semibold text-amber-400 hover:bg-amber-950/40 flex items-center gap-2 cursor-pointer transition-colors"
+                        >
+                          <Eye className="w-3.5 h-3.5 text-amber-400" />
+                          <span>Show Detail</span>
+                        </button>
+
+                        {onUpdateInventoryDetails && (
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              setActiveDropdownId(null);
+                              await onUpdateInventoryDetails(item.id, { isUrgent: !item.isUrgent });
+                            }}
+                            className="w-full px-3 py-2 text-xs font-medium text-slate-200 hover:text-white hover:bg-slate-800 flex items-center gap-2 cursor-pointer transition-colors"
+                          >
+                            <Flame className={`w-3.5 h-3.5 ${item.isUrgent ? 'text-rose-400 fill-rose-400' : 'text-slate-400'}`} />
+                            <span>{item.isUrgent ? 'Remove Urgent' : 'Mark Urgent 🔥'}</span>
+                          </button>
+                        )}
+
+                        <div className="my-1 border-t border-slate-800" />
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setActiveDropdownId(null);
+                            setDeleteConfirmItem(item);
+                          }}
+                          className="w-full px-3 py-2 text-xs font-medium text-rose-400 hover:bg-rose-950/40 flex items-center gap-2 cursor-pointer transition-colors"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          <span>Delete Record</span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
               </div>
 
             </div>
@@ -269,6 +398,138 @@ export const ExistingInventoryView: React.FC<ExistingInventoryViewProps> = ({
           </div>
         </div>
       )}
+
+      {/* DETAIL MODAL FOR INVENTORY ITEM */}
+      {detailItem && (() => {
+        const item = detailItem;
+        const isDie = item.category === 'Die';
+        const isUrgent = Boolean(item.isUrgent);
+
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-150">
+            <div className="w-full max-w-lg bg-slate-900 border border-slate-750 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+              {/* Header */}
+              <div className="px-6 py-4 border-b border-slate-800 bg-slate-950/70 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className={`w-9 h-9 rounded-xl flex items-center justify-center border ${
+                    isDie
+                      ? 'bg-purple-500/15 text-purple-400 border-purple-500/30'
+                      : 'bg-amber-500/15 text-amber-400 border-amber-500/30'
+                  }`}>
+                    {isDie ? <Scissors className="w-5 h-5" /> : <Package className="w-5 h-5" />}
+                  </div>
+                  <div>
+                    <h3 className="text-base font-bold text-white">
+                      {isDie ? 'Die Tooling Detail' : 'Inventory Stock Detail'}
+                    </h3>
+                    <p className="text-xs text-slate-400">Spec details, supplier & job allocation</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setDetailItem(null)}
+                  className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition-colors cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Body */}
+              <div className="p-6 space-y-4 overflow-y-auto text-xs">
+                {/* Status Bar */}
+                <div className="flex items-center justify-between p-3 rounded-xl bg-slate-950 border border-slate-800">
+                  <span className="px-2.5 py-1 rounded-lg text-xs font-bold font-mono bg-emerald-950 text-emerald-300 border border-emerald-800">
+                    ✅ {item.status || 'Received'}
+                  </span>
+                  {isUrgent && (
+                    <span className="px-2.5 py-1 rounded-lg text-xs font-bold bg-rose-500/20 text-rose-300 border border-rose-500/30 flex items-center gap-1">
+                      <Flame className="w-3.5 h-3.5 fill-rose-400" />
+                      <span>URGENT</span>
+                    </span>
+                  )}
+                </div>
+
+                {/* Specs Box */}
+                <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-3">
+                  <div className="flex items-center justify-between border-b border-slate-850 pb-2">
+                    <span className="text-slate-400 font-medium">Stock / Tool Type:</span>
+                    <span className="font-bold text-white text-sm">{item.stockType}</span>
+                  </div>
+                  <div className="flex items-center justify-between border-b border-slate-850 pb-2">
+                    <span className="text-slate-400 font-medium">{isDie ? 'Punch Spec:' : 'Board Size:'}</span>
+                    <span className="font-mono font-bold text-amber-300">{item.jobSize}</span>
+                  </div>
+                  <div className="flex items-center justify-between border-b border-slate-850 pb-2">
+                    <span className="text-slate-400 font-medium">Quantity in Registry:</span>
+                    <span className="font-mono font-bold text-sky-400">{Number(item.quantity).toLocaleString()} units</span>
+                  </div>
+                  <div className="flex items-center justify-between border-b border-slate-850 pb-2">
+                    <span className="text-slate-400 font-medium">{isDie ? 'Die Maker:' : 'Supplier / Vendor:'}</span>
+                    <span className="font-semibold text-slate-200">{item.receivingFrom}</span>
+                  </div>
+                  <div className="flex items-center justify-between border-b border-slate-850 pb-2">
+                    <span className="text-slate-400 font-medium">Linked Job:</span>
+                    <span className="font-semibold text-amber-400">{item.jobName || 'General Plant Buffer'}</span>
+                  </div>
+                  <div className="flex items-center justify-between border-b border-slate-850 pb-2">
+                    <span className="text-slate-400 font-medium">Print Specification:</span>
+                    <span className={`px-2 py-0.5 rounded text-[11px] font-semibold ${
+                      item.isPrinted
+                        ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                        : 'bg-slate-800 text-slate-300'
+                    }`}>
+                      {item.isPrinted ? `Printed (${item.pressName || 'Assigned'})` : 'Non-Printed (Plain Kraft)'}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-400 font-medium">Recorded Date:</span>
+                    <span className="font-mono text-slate-300">{item.orderedAt || '—'}</span>
+                  </div>
+                  {item.notes && (
+                    <div className="pt-2 border-t border-slate-850">
+                      <span className="text-slate-400 block mb-0.5">Notes:</span>
+                      <p className="text-slate-300 italic">{item.notes}</p>
+                    </div>
+                  )}
+                </div>
+
+                {onUpdateInventoryDetails && (
+                  <div className="pt-2">
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        await onUpdateInventoryDetails(item.id, { isUrgent: !isUrgent });
+                        setDetailItem({ ...item, isUrgent: !isUrgent });
+                      }}
+                      className={`w-full p-3 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-between border shadow-sm ${
+                        isUrgent
+                          ? 'bg-rose-950/60 text-rose-300 border-rose-600 hover:bg-rose-900/60'
+                          : 'bg-slate-950 hover:bg-slate-800 text-slate-300 border-slate-800'
+                      }`}
+                    >
+                      <span>{isUrgent ? 'Priority: Urgent 🔥' : 'Priority: Normal'}</span>
+                      <span className="underline font-mono text-[11px]">
+                        {isUrgent ? 'Click to Remove Urgent' : 'Click to Mark Urgent 🔥'}
+                      </span>
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* Footer */}
+              <div className="px-6 py-3.5 bg-slate-950 border-t border-slate-800 flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => setDetailItem(null)}
+                  className="px-4 py-1.5 text-xs font-semibold text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-lg transition-colors cursor-pointer"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
     </div>
   );
