@@ -311,6 +311,8 @@ export function subscribeToJobs(
           isUrgent: Boolean(data.isUrgent),
           pressStatus: data.pressStatus || undefined,
           isPrinted: data.isPrinted !== undefined ? Boolean(data.isPrinted) : undefined,
+          pressPhotoUrl: data.pressPhotoUrl || undefined,
+          processes: Array.isArray(data.processes) ? data.processes : undefined,
         });
       });
 
@@ -381,6 +383,8 @@ export async function addJobToFirestore(job: CorrugationJob): Promise<void> {
       isUrgent: Boolean(job.isUrgent),
       pressStatus: job.pressStatus || 'Pending',
       isPrinted: job.isPrinted !== undefined ? job.isPrinted : null,
+      pressPhotoUrl: job.pressPhotoUrl || null,
+      processes: Array.isArray(job.processes) ? job.processes : null,
       updatedAt: new Date().toISOString(),
     }, { merge: true });
   } catch (err) {
@@ -522,6 +526,7 @@ export function subscribeToInventory(
           category: data.category || 'Stock',
           dieMaker: data.dieMaker || undefined,
           punchType: data.punchType || undefined,
+          photoUrl: data.photoUrl || undefined,
         });
       });
 

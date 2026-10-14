@@ -19,6 +19,17 @@ export interface CorrugationJob {
   isUrgent?: boolean;
   pressStatus?: 'Pending' | 'Completed';
   isPrinted?: boolean;
+  pressPhotoUrl?: string; // Optional photo of press print / run setup
+  processes?: JobProcessStep[]; // Sequence of manufacturing process steps
+}
+
+export interface JobProcessStep {
+  id: string;
+  name: string;
+  completed: boolean;
+  completedDate?: string; // YYYY-MM-DD
+  notes?: string;
+  sequence?: number;
 }
 
 export interface InventoryItem {
@@ -39,6 +50,7 @@ export interface InventoryItem {
   category?: 'Stock' | 'Die';
   dieMaker?: string;
   punchType?: string;
+  photoUrl?: string; // Optional photo for die tooling or stock
 }
 
 export interface StockItemEntry {
@@ -59,6 +71,7 @@ export interface StockItemEntry {
   orderedAt?: string;
   status?: 'Received' | 'Not Received' | 'In Transit';
   isUrgent?: boolean;
+  photoUrl?: string;
 }
 
 export const INITIAL_JOB_TYPES: string[] = [];

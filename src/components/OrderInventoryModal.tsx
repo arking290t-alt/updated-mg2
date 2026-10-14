@@ -19,7 +19,9 @@ import {
   Calendar,
   Flame,
   CheckCircle2,
-  Clock
+  Clock,
+  Camera,
+  Image as ImageIcon
 } from 'lucide-react';
 import { InventoryItem, CorrugationJob, StockItemEntry, INITIAL_DIE_MAKERS, INITIAL_PUNCH_TYPES } from '../types/job';
 
@@ -125,6 +127,38 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
 
   const [dieQuantity, setDieQuantity] = useState<number>(1);
   const [dieNotes, setDieNotes] = useState<string>('');
+  const [diePhotoUrl, setDiePhotoUrl] = useState<string>('');
+
+  const handleDiePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        const maxDim = 800;
+        let width = img.width;
+        let height = img.height;
+        if (width > maxDim || height > maxDim) {
+          if (width > height) {
+            height = Math.round((height * maxDim) / width);
+            width = maxDim;
+          } else {
+            width = Math.round((width * maxDim) / height);
+            height = maxDim;
+          }
+        }
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx?.drawImage(img, 0, 0, width, height);
+        setDiePhotoUrl(canvas.toDataURL('image/jpeg', 0.8));
+      };
+      img.src = event.target?.result as string;
+    };
+    reader.readAsDataURL(file);
+  };
 
   // Current Stock Item Editor State
   const [stockType, setStockType] = useState('');
@@ -370,10 +404,12 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
       status: 'Not Received',
       isUrgent: activeJob ? Boolean(activeJob.isUrgent) : false,
       notes: dieNotes.trim() || undefined,
+      photoUrl: diePhotoUrl || undefined,
     };
 
     setStockQueue((prev) => [...prev, newEntry]);
     setDieNotes('');
+    setDiePhotoUrl('');
     setErrorMessage('');
   };
 
@@ -452,6 +488,7 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
         status: 'Not Received',
         isUrgent: activeJob ? Boolean(activeJob.isUrgent) : false,
         notes: dieNotes.trim() || undefined,
+        photoUrl: diePhotoUrl || undefined,
       });
     }
 
@@ -481,6 +518,7 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
       orderedAt: item.orderedAt || `${orderDate} 12:00`,
       status: item.status || 'Not Received',
       isUrgent: item.isUrgent !== undefined ? item.isUrgent : (activeJob ? Boolean(activeJob.isUrgent) : false),
+      photoUrl: item.photoUrl || undefined,
     }));
 
     onSaveInventoryOrders(payload as any);
@@ -909,6 +947,63 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
                     className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-xs text-white focus:outline-none focus:border-purple-500"
                   />
                 </div>
+              </div>
+
+              {/* Optional Die Tool Photo Upload */}
+              <div className="p-3 rounded-xl bg-slate-950/70 border border-slate-800 space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
+                    <Camera className="w-3.5 h-3.5 text-purple-400" />
+                    <span>Die Tool Photo / Proof (Optional)</span>
+                  </label>
+                  {diePhotoUrl && (
+                    <button
+                      type="button"
+                      onClick={() => setDiePhotoUrl('')}
+                      className="text-[11px] text-rose-400 hover:text-rose-300 transition-colors flex items-center gap-1 cursor-pointer"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                      <span>Remove Photo</span>
+                    </button>
+                  )}
+                </div>
+
+                {diePhotoUrl ? (
+                  <div className="flex items-center gap-3 p-2 bg-slate-900 border border-purple-500/30 rounded-xl">
+                    <img
+                      src={diePhotoUrl}
+                      alt="Die Preview"
+                      className="w-16 h-16 object-cover rounded-lg border border-slate-700 shrink-0"
+                    />
+                    <div className="text-xs space-y-1">
+                      <span className="text-purple-300 font-semibold block">Photo Attached</span>
+                      <p className="text-[11px] text-slate-400">Ready to save with this die tool order</p>
+                      <label className="inline-block text-[11px] text-purple-400 hover:text-purple-300 underline cursor-pointer">
+                        Change photo
+                        <input
+                          type="file"
+                          accept="image/*"
+                          onChange={handleDiePhotoUpload}
+                          className="hidden"
+                        />
+                      </label>
+                    </div>
+                  </div>
+                ) : (
+                  <label className="flex flex-col items-center justify-center p-3 border-2 border-dashed border-slate-800 hover:border-purple-500/60 rounded-xl bg-slate-900/40 hover:bg-purple-950/20 cursor-pointer transition-colors group">
+                    <div className="flex items-center gap-2 text-slate-400 group-hover:text-purple-300 text-xs">
+                      <Camera className="w-4 h-4 text-slate-500 group-hover:text-purple-400" />
+                      <span className="font-medium">Upload Die Photo or Layout Drawing</span>
+                    </div>
+                    <span className="text-[10px] text-slate-500 mt-0.5">PNG, JPG, or WEBP (Optional)</span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={handleDiePhotoUpload}
+                      className="hidden"
+                    />
+                  </label>
+                )}
               </div>
 
               {/* Add to Queue Button */}

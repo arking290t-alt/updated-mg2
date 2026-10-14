@@ -29,12 +29,15 @@ import {
   ExternalLink,
   Info,
   Tag,
-  ChevronDown
+  ChevronDown,
+  Camera,
+  Workflow
 } from 'lucide-react';
 import { 
   CorrugationJob, 
   InventoryItem, 
   JobStatus, 
+  JobProcessStep,
   INITIAL_PRESS_NAMES, 
   INITIAL_STOCK_TYPES, 
   COMMON_SUPPLIERS,
@@ -48,7 +51,7 @@ interface PlantDataViewProps {
   availablePresses?: string[];
   availableStockTypes?: string[];
   availableSuppliers?: string[];
-  initialTab?: 'stock' | 'die' | 'press';
+  initialTab?: 'stock' | 'die' | 'press' | 'process';
   onUpdateJobDetails: (jobId: string, updates: Partial<CorrugationJob>) => Promise<void>;
   onDeleteJob: (jobId: string) => Promise<void>;
   onAddJob?: (newJob: Omit<CorrugationJob, 'id' | 'createdAt' | 'status'> & { boardSize?: string; jobSize?: string; pressName?: string; isUrgent?: boolean; status?: JobStatus }) => Promise<void>;
@@ -56,6 +59,54 @@ interface PlantDataViewProps {
   onDeleteInventory: (itemId: string) => Promise<void>;
   onAddInventoryItem?: (newItem: Omit<InventoryItem, 'id' | 'orderedAt'>) => Promise<void>;
 }
+
+const DEFAULT_CORRUGATION_PROCESSES = [
+  'Paper Reel Splicing & Loading',
+  'Corrugation / Fluting (Single / Double Wall)',
+  'Sheet Slitting & Scoring',
+  'Flexo Printing & Inking',
+  'Die Cutting & Creasing',
+  'Rotary Slotting & Punching',
+  'Folder Gluer / Side Pasting',
+  'Wire Stitching & Binding',
+  'Quality Inspection & Burst Testing',
+  'Bundling & Strapping',
+  'Palletization & Shrink Wrapping',
+  'Dispatch & Logistics'
+];
+
+const MG_SAVED_PROCESSES_KEY = 'mg_saved_process_names';
+
+const compressImageFile = (file: File): Promise<string> => {
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        const maxDim = 800;
+        let width = img.width;
+        let height = img.height;
+        if (width > maxDim || height > maxDim) {
+          if (width > height) {
+            height = Math.round((height * maxDim) / width);
+            width = maxDim;
+          } else {
+            width = Math.round((width * maxDim) / height);
+            height = maxDim;
+          }
+        }
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx?.drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL('image/jpeg', 0.8));
+      };
+      img.src = event.target?.result as string;
+    };
+    reader.readAsDataURL(file);
+  });
+};
 
 export const PlantDataView: React.FC<PlantDataViewProps> = ({
   jobs,
@@ -71,8 +122,8 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
   onDeleteInventory,
   onAddInventoryItem,
 }) => {
-  // Primary Tab: 'stock' (Ordered Stock Data), 'die' (Die Tooling Data), or 'press' (Press Operations Data)
-  const [activeTab, setActiveTab] = useState<'stock' | 'die' | 'press'>(initialTab);
+  // Primary Tab: 'stock' | 'die' | 'press' | 'process'
+  const [activeTab, setActiveTab] = useState<'stock' | 'die' | 'press' | 'process'>(initialTab);
 
   useEffect(() => {
     if (initialTab) {
@@ -132,7 +183,41 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
 
   const todayIso = new Date().toISOString().split('T')[0];
 
-  // Form State for Adding / Editing Stock
+  // Optional Photo Upload & Preview Lightbox States
+  const [dieAddPhotoUrl, setDieAddPhotoUrl] = useState<string>('');
+  const [previewImage, setPreviewImage] = useState<{ url: string; title: string } | null>(null);
+
+  // Process Tracking States
+  const [selectedProcessJobId, setSelectedProcessJobId] = useState<string>('');
+  const [savedProcesses, setSavedProcesses] = useState<string[]>(() => {
+    try {
+      const stored = localStorage.getItem(MG_SAVED_PROCESSES_KEY);
+      if (stored) return JSON.parse(stored);
+    } catch (e) {
+      // ignore
+    }
+    return DEFAULT_CORRUGATION_PROCESSES;
+  });
+  const [customProcessInput, setCustomProcessInput] = useState<string>('');
+  const [processSearch, setProcessSearch] = useState<string>('');
+  const [processStatusFilter, setProcessStatusFilter] = useState<'all' | 'pending' | 'completed'>('all');
+  const [processNotification, setProcessNotification] = useState<{ type: 'success' | 'info'; message: string } | null>(null);
+  const [inlineDateInputs, setInlineDateInputs] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    if (!selectedProcessJobId && jobs.length > 0) {
+      setSelectedProcessJobId(jobs[0].id);
+    }
+  }, [jobs, selectedProcessJobId]);
+
+  useEffect(() => {
+    if (processNotification) {
+      const timer = setTimeout(() => setProcessNotification(null), 6000);
+      return () => clearTimeout(timer);
+    }
+  }, [processNotification]);
+
+  // Form State for Adding / Editing Stock (with optional photoUrl)
   const [stockForm, setStockForm] = useState({
     stockType: availableStockTypes[0] || 'Kraft Liner 180 GSM',
     jobSize: '',
@@ -142,6 +227,7 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
     isUrgent: false,
     orderDate: todayIso,
     notes: '',
+    photoUrl: '' as string,
   });
 
   // Die Order specifics in Add Stock Modal
@@ -166,7 +252,7 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
     }
   };
 
-  // Form State for Adding / Editing Press Job
+  // Form State for Adding / Editing Press Job (with optional pressPhotoUrl)
   const [pressForm, setPressForm] = useState({
     jobName: '',
     jobType: 'Corrugated Board Slitting & Scoring',
@@ -178,6 +264,7 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
     isUrgent: false,
     jobDate: todayIso,
     notes: '',
+    pressPhotoUrl: '' as string,
   });
 
   // Export Loading States
@@ -330,6 +417,37 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
   const pendingPressJobs = pressEligibleJobs.filter((j) => j.pressStatus !== 'Completed').length;
   const urgentPressJobs = pressEligibleJobs.filter((j) => j.isUrgent).length;
 
+  // Metrics & Filtering for Process Tracking
+  const jobsWithProcesses = jobs.filter((j) => j.processes && j.processes.length > 0);
+  const jobsWithProcessesCount = jobsWithProcesses.length;
+  const fullyCompletedProcessJobs = jobs.filter((j) => {
+    const procs = j.processes || [];
+    return procs.length > 0 && procs.every((p) => p.completed && Boolean(p.completedDate));
+  });
+  const inProgressProcessJobs = jobsWithProcesses.filter((j) => {
+    const procs = j.processes || [];
+    return procs.some((p) => !p.completed || !p.completedDate);
+  });
+
+  const filteredProcessJobs = jobs.filter((job) => {
+    const matchesSearch =
+      (job.jobName || '').toLowerCase().includes(processSearch.toLowerCase()) ||
+      (job.jobType || '').toLowerCase().includes(processSearch.toLowerCase()) ||
+      (job.jobPlacement || '').toLowerCase().includes(processSearch.toLowerCase());
+    if (!matchesSearch) return false;
+
+    const procs = job.processes || [];
+    const isCompleted = procs.length > 0 && procs.every((p) => p.completed && Boolean(p.completedDate));
+
+    if (processStatusFilter === 'pending') {
+      return !isCompleted;
+    }
+    if (processStatusFilter === 'completed') {
+      return isCompleted;
+    }
+    return true;
+  });
+
   // -----------------------------------------------------------------
   // TOGGLES
   // -----------------------------------------------------------------
@@ -380,6 +498,7 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
       isUrgent: false,
       orderDate: todayIso,
       notes: '',
+      photoUrl: '',
     });
     setIsAddStockModalOpen(true);
   };
@@ -392,6 +511,7 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
     setDieMaker(INITIAL_DIE_MAKERS[0] || 'Apex Laser Dies');
     setDiePunchType(INITIAL_PUNCH_TYPES[0] || 'Rotary Die Punch');
     setDieQuantity(1);
+    setDieAddPhotoUrl('');
     setStockForm({
       stockType: '',
       jobSize: '',
@@ -401,8 +521,42 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
       isUrgent: false,
       orderDate: todayIso,
       notes: '',
+      photoUrl: '',
     });
     setIsAddStockModalOpen(true);
+  };
+
+  const handleDieAddPhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const compressed = await compressImageFile(file);
+      setDieAddPhotoUrl(compressed);
+    } catch (err) {
+      console.error('Error compressing die photo:', err);
+    }
+  };
+
+  const handleEditStockPhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const compressed = await compressImageFile(file);
+      setStockForm((prev) => ({ ...prev, photoUrl: compressed }));
+    } catch (err) {
+      console.error('Error compressing stock/die photo:', err);
+    }
+  };
+
+  const handlePressPhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const compressed = await compressImageFile(file);
+      setPressForm((prev) => ({ ...prev, pressPhotoUrl: compressed }));
+    } catch (err) {
+      console.error('Error compressing press photo:', err);
+    }
   };
 
   const handleSaveNewStock = async (e: React.FormEvent) => {
@@ -424,6 +578,7 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
           isUrgent: false,
           isPrinted: false,
           notes: stockForm.notes,
+          photoUrl: dieAddPhotoUrl || undefined,
         } as any);
       } else {
         await onAddInventoryItem({
@@ -436,6 +591,7 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
           isUrgent: false,
           isPrinted: false,
           notes: stockForm.notes,
+          photoUrl: stockForm.photoUrl || undefined,
         });
       }
     } else {
@@ -453,8 +609,10 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
         jobType: stockAddCategory === 'Die' ? dieJobType : undefined,
         dieMaker: stockAddCategory === 'Die' ? dieMaker : undefined,
         punchType: stockAddCategory === 'Die' ? diePunchType : undefined,
+        photoUrl: (stockAddCategory === 'Die' ? dieAddPhotoUrl : stockForm.photoUrl) || undefined,
       });
     }
+    setDieAddPhotoUrl('');
     setIsAddStockModalOpen(false);
   };
 
@@ -469,6 +627,7 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
       isUrgent: Boolean(item.isUrgent),
       orderDate: (item.orderedAt || '').split(' ')[0] || todayIso,
       notes: item.notes || '',
+      photoUrl: item.photoUrl || '',
     });
   };
 
@@ -484,6 +643,7 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
       isUrgent: stockForm.isUrgent,
       orderedAt: `${stockForm.orderDate} 12:00`,
       notes: stockForm.notes,
+      photoUrl: stockForm.photoUrl || undefined,
     });
     setEditingStockItem(null);
   };
@@ -500,6 +660,7 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
       isUrgent: false,
       jobDate: todayIso,
       notes: '',
+      pressPhotoUrl: '',
     });
     setIsAddPressJobModalOpen(true);
   };
@@ -528,6 +689,7 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
         isUrgent: pressForm.isUrgent,
         createdAt: `${pressForm.jobDate} 12:00`,
         notes: pressForm.notes,
+        pressPhotoUrl: pressForm.pressPhotoUrl || undefined,
       } as any);
     }
     setIsAddPressJobModalOpen(false);
@@ -547,6 +709,7 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
       isUrgent: Boolean(job.isUrgent),
       jobDate: (job.createdAt || '').split(' ')[0] || todayIso,
       notes: job.notes || '',
+      pressPhotoUrl: job.pressPhotoUrl || '',
     });
   };
 
@@ -564,8 +727,157 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
       pressStatus: (pressForm.status === 'Completed' ? 'Completed' : 'Pending'),
       isUrgent: pressForm.isUrgent,
       notes: pressForm.notes,
+      pressPhotoUrl: pressForm.pressPhotoUrl || undefined,
     });
     setEditingPressJob(null);
+  };
+
+  // -----------------------------------------------------------------
+  // PROCESS MANAGEMENT HANDLERS (Add by saving & selecting, mark date, auto-complete)
+  // -----------------------------------------------------------------
+  const handleSaveAndAddProcessToJob = async (jobId: string, processName: string) => {
+    const trimmed = processName.trim();
+    if (!trimmed) return;
+    const targetJob = jobs.find((j) => j.id === jobId);
+    if (!targetJob) return;
+
+    // 1. Save to reusable process list
+    if (!savedProcesses.includes(trimmed)) {
+      const updatedSaved = [...savedProcesses, trimmed];
+      setSavedProcesses(updatedSaved);
+      try {
+        localStorage.setItem(MG_SAVED_PROCESSES_KEY, JSON.stringify(updatedSaved));
+      } catch (e) {
+        // ignore
+      }
+    }
+
+    // 2. Add process step to target job
+    const currentSteps = targetJob.processes || [];
+    const newStep: JobProcessStep = {
+      id: `proc-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+      name: trimmed,
+      completed: false,
+      sequence: currentSteps.length + 1,
+    };
+    const updatedSteps = [...currentSteps, newStep];
+
+    // Since a new pending process was added, if job was previously marked Completed, it now requires this step
+    const allCompleted = updatedSteps.every((p) => p.completed && Boolean(p.completedDate));
+    const nextStatus: JobStatus = allCompleted ? 'Completed' : (targetJob.status === 'Completed' ? 'Pending' : targetJob.status);
+
+    await onUpdateJobDetails(targetJob.id, {
+      processes: updatedSteps,
+      status: nextStatus,
+    });
+
+    setCustomProcessInput('');
+    setProcessNotification({
+      type: 'info',
+      message: `Process "${trimmed}" saved and added to job "${targetJob.jobName}".`
+    });
+  };
+
+  const handleMarkProcessDate = async (jobId: string, stepId: string, dateStr?: string) => {
+    const targetJob = jobs.find((j) => j.id === jobId);
+    if (!targetJob) return;
+
+    const chosenDate = (dateStr || inlineDateInputs[`${jobId}-${stepId}`] || todayIso).trim();
+    const currentSteps = targetJob.processes || [];
+    const updatedSteps = currentSteps.map((p) =>
+      p.id === stepId ? { ...p, completed: true, completedDate: chosenDate } : p
+    );
+
+    // AUTO-COMPLETION RULE:
+    // "AFTER COMPELTING ALL THE PROCESS AUTOMATICALLY THE JOB WILL BE COMPLETED"
+    const allProcessesCompleted = updatedSteps.length > 0 && updatedSteps.every((p) => p.completed && Boolean(p.completedDate));
+    const nextStatus: JobStatus = allProcessesCompleted ? 'Completed' : (targetJob.status === 'Completed' ? 'Pending' : targetJob.status);
+
+    await onUpdateJobDetails(targetJob.id, {
+      processes: updatedSteps,
+      status: nextStatus,
+    });
+
+    if (allProcessesCompleted) {
+      setProcessNotification({
+        type: 'success',
+        message: `🎉 All processes finished for "${targetJob.jobName}"! Job has been automatically marked as COMPLETED.`
+      });
+    } else {
+      setProcessNotification({
+        type: 'info',
+        message: `Process dated (${chosenDate}) for "${targetJob.jobName}".`
+      });
+    }
+  };
+
+  const handleUnmarkProcessDate = async (jobId: string, stepId: string) => {
+    const targetJob = jobs.find((j) => j.id === jobId);
+    if (!targetJob) return;
+
+    const currentSteps = targetJob.processes || [];
+    const updatedSteps = currentSteps.map((p) =>
+      p.id === stepId ? { ...p, completed: false, completedDate: undefined } : p
+    );
+
+    // If previously completed, revert to Pending since a process is uncompleted
+    const nextStatus: JobStatus = targetJob.status === 'Completed' ? 'Pending' : targetJob.status;
+
+    await onUpdateJobDetails(targetJob.id, {
+      processes: updatedSteps,
+      status: nextStatus,
+    });
+
+    setProcessNotification({
+      type: 'info',
+      message: `Process reset to Pending. Job status updated to ${nextStatus}.`
+    });
+  };
+
+  const handleRemoveProcessFromJob = async (jobId: string, stepId: string) => {
+    const targetJob = jobs.find((j) => j.id === jobId);
+    if (!targetJob) return;
+
+    const updatedSteps = (targetJob.processes || []).filter((p) => p.id !== stepId);
+    const allCompleted = updatedSteps.length > 0 && updatedSteps.every((p) => p.completed && Boolean(p.completedDate));
+    const nextStatus: JobStatus = allCompleted ? 'Completed' : (targetJob.status === 'Completed' && updatedSteps.length === 0 ? 'Pending' : targetJob.status);
+
+    await onUpdateJobDetails(targetJob.id, {
+      processes: updatedSteps,
+      status: nextStatus,
+    });
+  };
+
+  const handleAddStandardPipeline = async (jobId: string) => {
+    const targetJob = jobs.find((j) => j.id === jobId);
+    if (!targetJob) return;
+
+    const standardSteps = [
+      'Corrugation / Fluting (Single / Double Wall)',
+      'Flexo Printing & Inking',
+      'Die Cutting & Creasing',
+      'Folder Gluer / Side Pasting',
+      'Wire Stitching & Packaging',
+      'Dispatch & Delivery'
+    ];
+
+    const currentSteps = targetJob.processes || [];
+    const newSteps: JobProcessStep[] = standardSteps.map((name, idx) => ({
+      id: `proc-${Date.now()}-${idx}-${Math.random().toString(36).substr(2, 4)}`,
+      name,
+      completed: false,
+      sequence: currentSteps.length + idx + 1,
+    }));
+
+    await onUpdateJobDetails(targetJob.id, {
+      processes: [...currentSteps, ...newSteps],
+      status: 'Pending',
+    });
+
+    setProcessNotification({
+      type: 'info',
+      message: `Standard 6-Step Production Pipeline added to "${targetJob.jobName}".`
+    });
   };
 
   // -----------------------------------------------------------------
@@ -1209,7 +1521,7 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
               <Plus className="w-4 h-4 stroke-[2.5]" />
               <span>+ Add Die Tool</span>
             </button>
-          ) : (
+          ) : activeTab === 'press' ? (
             <button
               onClick={handleOpenAddPressJob}
               className="px-3.5 py-2 text-xs font-bold text-slate-950 bg-amber-500 hover:bg-amber-400 active:bg-amber-600 rounded-xl flex items-center gap-1.5 transition-colors cursor-pointer shadow-sm"
@@ -1217,15 +1529,27 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
               <Plus className="w-4 h-4 stroke-[2.5]" />
               <span>+ Add Press Job</span>
             </button>
+          ) : (
+            <button
+              onClick={() => {
+                if (selectedProcessJobId) {
+                  handleAddStandardPipeline(selectedProcessJobId);
+                }
+              }}
+              className="px-3.5 py-2 text-xs font-bold text-white bg-teal-600 hover:bg-teal-500 active:bg-teal-700 rounded-xl flex items-center gap-1.5 transition-colors cursor-pointer shadow-sm"
+            >
+              <Workflow className="w-4 h-4 stroke-[2.5]" />
+              <span>+ Add Standard Process Pipeline</span>
+            </button>
           )}
         </div>
       </div>
 
-      {/* 2. Top Navigation Tabs: Stock Data vs Die Data vs Press Data */}
-      <div className="flex border-b border-slate-800">
+      {/* 2. Top Navigation Tabs: Stock Data vs Die Data vs Press Data vs Process */}
+      <div className="flex border-b border-slate-800 overflow-x-auto">
         <button
           onClick={() => setActiveTab('stock')}
-          className={`flex items-center gap-2 px-5 py-3 text-xs sm:text-sm font-bold border-b-2 transition-all cursor-pointer ${
+          className={`flex items-center gap-2 px-5 py-3 text-xs sm:text-sm font-bold border-b-2 transition-all cursor-pointer whitespace-nowrap ${
             activeTab === 'stock'
               ? 'border-blue-500 text-blue-400 bg-blue-500/5'
               : 'border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-700'
@@ -1242,7 +1566,7 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
 
         <button
           onClick={() => setActiveTab('die')}
-          className={`flex items-center gap-2 px-5 py-3 text-xs sm:text-sm font-bold border-b-2 transition-all cursor-pointer ${
+          className={`flex items-center gap-2 px-5 py-3 text-xs sm:text-sm font-bold border-b-2 transition-all cursor-pointer whitespace-nowrap ${
             activeTab === 'die'
               ? 'border-purple-500 text-purple-400 bg-purple-500/5'
               : 'border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-700'
@@ -1259,7 +1583,7 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
 
         <button
           onClick={() => setActiveTab('press')}
-          className={`flex items-center gap-2 px-5 py-3 text-xs sm:text-sm font-bold border-b-2 transition-all cursor-pointer ${
+          className={`flex items-center gap-2 px-5 py-3 text-xs sm:text-sm font-bold border-b-2 transition-all cursor-pointer whitespace-nowrap ${
             activeTab === 'press'
               ? 'border-amber-500 text-amber-400 bg-amber-500/5'
               : 'border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-700'
@@ -1270,6 +1594,23 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
           {urgentPressJobs > 0 && (
             <span className="px-1.5 py-0.5 rounded-full text-[10px] font-mono bg-rose-500/20 text-rose-400 border border-rose-500/30 font-bold">
               {urgentPressJobs} Urgent
+            </span>
+          )}
+        </button>
+
+        <button
+          onClick={() => setActiveTab('process')}
+          className={`flex items-center gap-2 px-5 py-3 text-xs sm:text-sm font-bold border-b-2 transition-all cursor-pointer whitespace-nowrap ${
+            activeTab === 'process'
+              ? 'border-teal-500 text-teal-400 bg-teal-500/5'
+              : 'border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-700'
+          }`}
+        >
+          <Workflow className="w-4 h-4 text-teal-400" />
+          <span>4. Process ({jobsWithProcessesCount}/{jobs.length})</span>
+          {inProgressProcessJobs.length > 0 && (
+            <span className="px-1.5 py-0.5 rounded-full text-[10px] font-mono bg-teal-500/20 text-teal-400 border border-teal-500/30 font-bold">
+              {inProgressProcessJobs.length} Active
             </span>
           )}
         </button>
@@ -1984,7 +2325,26 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
 
                           {/* 5. Die Maker */}
                           <td className="py-3 px-4 text-purple-300 font-medium whitespace-nowrap">
-                            {item.dieMaker || item.receivingFrom || 'Apex Laser Dies'}
+                            <div className="flex items-center gap-2">
+                              <span>{item.dieMaker || item.receivingFrom || 'Apex Laser Dies'}</span>
+                              {item.photoUrl && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setPreviewImage({
+                                      url: item.photoUrl!,
+                                      title: `${item.dieMaker || 'Die'} Tool Proof`,
+                                    });
+                                  }}
+                                  className="px-2 py-0.5 rounded-md bg-purple-950/80 hover:bg-purple-900 border border-purple-500/40 text-purple-300 hover:text-white transition-colors cursor-pointer flex items-center gap-1 text-[11px]"
+                                  title="View uploaded Die Photo"
+                                >
+                                  <Camera className="w-3 h-3 text-purple-400" />
+                                  <span>Photo</span>
+                                </button>
+                              )}
+                            </div>
                           </td>
 
                           {/* 6. Punch Type */}
@@ -2421,19 +2781,38 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
 
                           {/* 5. Assigned Press Name (Fillable / Editable detail) */}
                           <td className="py-3 px-4 text-slate-200 font-medium">
-                            {job.pressName ? (
-                              <div className="flex items-center gap-1.5">
-                                <Printer className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                                <span className="font-semibold">{job.pressName}</span>
-                              </div>
-                            ) : (
-                              <button
-                                onClick={() => handleOpenEditPressJob(job)}
-                                className="text-slate-500 hover:text-amber-400 italic flex items-center gap-1 cursor-pointer"
-                              >
-                                <span>+ Assign Press Name</span>
-                              </button>
-                            )}
+                            <div className="flex items-center gap-2">
+                              {job.pressName ? (
+                                <div className="flex items-center gap-1.5">
+                                  <Printer className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                                  <span className="font-semibold">{job.pressName}</span>
+                                </div>
+                              ) : (
+                                <button
+                                  onClick={() => handleOpenEditPressJob(job)}
+                                  className="text-slate-500 hover:text-amber-400 italic flex items-center gap-1 cursor-pointer"
+                                >
+                                  <span>+ Assign Press Name</span>
+                                </button>
+                              )}
+                              {job.pressPhotoUrl && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setPreviewImage({
+                                      url: job.pressPhotoUrl!,
+                                      title: `${job.jobName} - Press Run Proof`,
+                                    });
+                                  }}
+                                  className="px-2 py-0.5 rounded-md bg-amber-950/80 hover:bg-amber-900 border border-amber-500/40 text-amber-300 hover:text-white transition-colors cursor-pointer flex items-center gap-1 text-[11px]"
+                                  title="View Press Run / Proof Photo"
+                                >
+                                  <Camera className="w-3 h-3 text-amber-400" />
+                                  <span>Photo</span>
+                                </button>
+                              )}
+                            </div>
                           </td>
 
                           {/* 6. Job Type */}
@@ -2604,6 +2983,578 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
               <div className="text-[11px] text-slate-500">
                 Click <strong>Fill / Edit</strong> to update board size, job size, or machine name
               </div>
+            </div>
+          </div>
+
+        </div>
+      )}
+
+      {/* =================================================================== */}
+      {/* TAB 4: MANUFACTURING PROCESS TRACKING & PIPELINE */}
+      {/* =================================================================== */}
+      {activeTab === 'process' && (
+        <div className="space-y-6 animate-in fade-in duration-150">
+          
+          {/* Process Notification Banner (Auto-Dismiss or Dismiss button) */}
+          {processNotification && (
+            <div className={`p-4 rounded-xl border flex items-center justify-between gap-3 shadow-md transition-all ${
+              processNotification.type === 'success'
+                ? 'bg-emerald-950/80 border-emerald-500 text-emerald-200'
+                : 'bg-teal-950/80 border-teal-500 text-teal-200'
+            }`}>
+              <div className="flex items-center gap-2.5">
+                <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
+                <span className="text-xs sm:text-sm font-semibold">{processNotification.message}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setProcessNotification(null)}
+                className="text-slate-400 hover:text-white p-1 rounded-lg"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          )}
+
+          {/* KPI Summary Cards */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
+            <div className="p-3.5 rounded-xl bg-slate-900 border border-slate-800">
+              <div className="flex items-center justify-between text-xs text-slate-400 mb-1">
+                <span>Total Jobs</span>
+                <Database className="w-4 h-4 text-teal-400" />
+              </div>
+              <div className="text-xl sm:text-2xl font-bold font-mono text-white">{jobs.length}</div>
+              <div className="text-[10px] text-slate-500 mt-0.5">All registered jobs</div>
+            </div>
+
+            <div className="p-3.5 rounded-xl bg-slate-900 border border-slate-800">
+              <div className="flex items-center justify-between text-xs text-slate-400 mb-1">
+                <span>Configured Pipelines</span>
+                <Workflow className="w-4 h-4 text-sky-400" />
+              </div>
+              <div className="text-xl sm:text-2xl font-bold font-mono text-sky-400">{jobsWithProcessesCount}</div>
+              <div className="text-[10px] text-slate-500 mt-0.5">Jobs with process steps</div>
+            </div>
+
+            <div className="p-3.5 rounded-xl bg-slate-900 border border-slate-800">
+              <div className="flex items-center justify-between text-xs text-slate-400 mb-1">
+                <span>In-Progress</span>
+                <Clock className="w-4 h-4 text-amber-400" />
+              </div>
+              <div className="text-xl sm:text-2xl font-bold font-mono text-amber-400">{inProgressProcessJobs.length}</div>
+              <div className="text-[10px] text-slate-500 mt-0.5">Pending process stages</div>
+            </div>
+
+            <div className="p-3.5 rounded-xl bg-slate-900 border border-slate-800">
+              <div className="flex items-center justify-between text-xs text-slate-400 mb-1">
+                <span>Auto-Completed</span>
+                <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+              </div>
+              <div className="text-xl sm:text-2xl font-bold font-mono text-emerald-400">{fullyCompletedProcessJobs.length}</div>
+              <div className="text-[10px] text-slate-500 mt-0.5">All processes finished</div>
+            </div>
+          </div>
+
+          {/* Section 1: Process Manager & Step Builder for Selected Job */}
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 sm:p-6 shadow-sm space-y-5">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-slate-800">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-teal-500/15 text-teal-400 border border-teal-500/30 flex items-center justify-center">
+                  <Workflow className="w-5 h-5" />
+                </div>
+                <div>
+                  <h2 className="text-base sm:text-lg font-bold text-white">
+                    Job Process Configuration & Date Completion
+                  </h2>
+                  <p className="text-xs text-slate-400">
+                    Select a job, add processes by saving & selecting, mark completion dates, and automatically finalize the job.
+                  </p>
+                </div>
+              </div>
+
+              {/* Select Job Picker */}
+              <div className="flex items-center gap-2 w-full md:w-auto">
+                <label className="text-xs font-semibold text-slate-300 whitespace-nowrap">
+                  Selected Job:
+                </label>
+                <select
+                  value={selectedProcessJobId}
+                  onChange={(e) => setSelectedProcessJobId(e.target.value)}
+                  className="px-3 py-2 bg-slate-950 border border-teal-500/40 rounded-xl text-xs font-semibold text-white focus:outline-none focus:border-teal-400 cursor-pointer min-w-[220px]"
+                >
+                  {jobs.length === 0 ? (
+                    <option value="">No jobs available</option>
+                  ) : (
+                    jobs.map((j) => (
+                      <option key={j.id} value={j.id}>
+                        {j.jobName} ({j.status === 'Completed' ? '✅ Completed' : '⏳ Pending'} · {(j.processes?.length || 0)} steps)
+                      </option>
+                    ))
+                  )}
+                </select>
+              </div>
+            </div>
+
+            {/* Currently Active Selected Job Details */}
+            {(() => {
+              const currentJob = jobs.find((j) => j.id === selectedProcessJobId) || jobs[0];
+              if (!currentJob) {
+                return (
+                  <div className="p-8 text-center text-slate-500">
+                    <p>No jobs found. Create a job first to assign processes.</p>
+                  </div>
+                );
+              }
+
+              const steps = currentJob.processes || [];
+              const completedCount = steps.filter((s) => s.completed && Boolean(s.completedDate)).length;
+              const totalCount = steps.length;
+              const percent = totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0;
+              const isAllDone = totalCount > 0 && completedCount === totalCount;
+
+              return (
+                <div className="space-y-6">
+                  {/* Selected Job Status Card */}
+                  <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-base font-bold text-white">{currentJob.jobName}</span>
+                        <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-slate-800 text-slate-300">
+                          {currentJob.jobPlacement} Line
+                        </span>
+                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold font-mono border ${
+                          isAllDone || currentJob.status === 'Completed'
+                            ? 'bg-emerald-950 text-emerald-300 border-emerald-800'
+                            : 'bg-amber-950 text-amber-300 border-amber-800'
+                        }`}>
+                          {isAllDone || currentJob.status === 'Completed' ? '✅ Job Status: Completed' : '⏳ Job Status: Pending'}
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-400">
+                        Type: <span className="text-slate-300 font-medium">{currentJob.jobType}</span> · Progress: <strong className="text-teal-400">{completedCount} of {totalCount}</strong> processes finished ({percent}%)
+                      </p>
+                    </div>
+
+                    {/* Progress Bar */}
+                    <div className="w-full sm:w-56 space-y-1.5 shrink-0">
+                      <div className="flex items-center justify-between text-[11px] font-mono">
+                        <span className="text-slate-400">Pipeline Completion</span>
+                        <span className="font-bold text-teal-400">{percent}%</span>
+                      </div>
+                      <div className="w-full bg-slate-800 h-2.5 rounded-full overflow-hidden">
+                        <div
+                          style={{ width: `${percent}%` }}
+                          className={`h-full transition-all duration-300 ${
+                            isAllDone ? 'bg-emerald-400' : 'bg-teal-500'
+                          }`}
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Add Process to Selected Job (Save & Select) */}
+                  <div className="p-4 rounded-xl bg-slate-950/60 border border-teal-900/40 space-y-3">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                      <div className="text-xs font-bold text-teal-300 flex items-center gap-1.5 uppercase tracking-wider">
+                        <Plus className="w-3.5 h-3.5 text-teal-400" />
+                        <span>Add Process by Saving & Selecting</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleAddStandardPipeline(currentJob.id)}
+                        className="text-xs font-semibold text-teal-400 hover:text-teal-300 flex items-center gap-1 cursor-pointer underline decoration-dotted"
+                      >
+                        <span>⚡ Add Standard 6-Step Pipeline</span>
+                      </button>
+                    </div>
+
+                    {/* Custom Process Input with Save & Select Button */}
+                    <div className="flex flex-col sm:flex-row gap-2">
+                      <input
+                        type="text"
+                        value={customProcessInput}
+                        onChange={(e) => setCustomProcessInput(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            handleSaveAndAddProcessToJob(currentJob.id, customProcessInput);
+                          }
+                        }}
+                        placeholder="Type process name (e.g. UV Varnishing, Die Punching, Box Gluing)..."
+                        className="flex-1 px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-teal-400"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => handleSaveAndAddProcessToJob(currentJob.id, customProcessInput)}
+                        className="px-4 py-2 bg-teal-600 hover:bg-teal-500 active:bg-teal-700 text-white rounded-xl text-xs font-bold transition-colors cursor-pointer flex items-center justify-center gap-1.5 shadow-sm shrink-0"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>Save & Select (+ Add to Job)</span>
+                      </button>
+                    </div>
+
+                    {/* Reusable Saved Process Chips (Click to select & add) */}
+                    <div>
+                      <span className="text-[11px] text-slate-400 block mb-1.5">
+                        Or click from saved reusable processes to add to <strong>{currentJob.jobName}</strong>:
+                      </span>
+                      <div className="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto pr-1">
+                        {savedProcesses.map((pName) => {
+                          const isAlreadyAdded = steps.some((s) => s.name.toLowerCase() === pName.toLowerCase());
+                          return (
+                            <button
+                              key={pName}
+                              type="button"
+                              onClick={() => handleSaveAndAddProcessToJob(currentJob.id, pName)}
+                              className={`px-2.5 py-1 rounded-lg text-[11px] font-medium transition-colors cursor-pointer flex items-center gap-1 border ${
+                                isAlreadyAdded
+                                  ? 'bg-teal-950/40 text-teal-300 border-teal-800/60 hover:bg-teal-900/50'
+                                  : 'bg-slate-900 text-slate-300 border-slate-800 hover:border-teal-500/50 hover:text-white'
+                              }`}
+                              title={isAlreadyAdded ? 'Already added (click to add another stage)' : 'Click to add process to job'}
+                            >
+                              <Plus className="w-3 h-3 text-teal-400" />
+                              <span>{pName}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Steps Table: Option Beside Job to Mark Process as Date */}
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
+                        <Workflow className="w-3.5 h-3.5 text-teal-400" />
+                        <span>Assigned Processes & Date Completion</span>
+                      </div>
+                      <span className="text-xs text-slate-400 font-mono">
+                        {completedCount} / {totalCount} Completed
+                      </span>
+                    </div>
+
+                    {steps.length === 0 ? (
+                      <div className="p-8 rounded-xl bg-slate-950 border border-slate-800 text-center space-y-3">
+                        <Workflow className="w-8 h-8 mx-auto text-slate-600" />
+                        <div className="space-y-1">
+                          <p className="text-sm font-semibold text-slate-300">No processes assigned to this job yet</p>
+                          <p className="text-xs text-slate-500">
+                            Use the form above to add custom processes by saving and selecting them, or click below to populate the standard pipeline.
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleAddStandardPipeline(currentJob.id)}
+                          className="px-4 py-2 bg-teal-600 hover:bg-teal-500 text-white rounded-xl text-xs font-bold cursor-pointer transition-colors shadow-sm inline-flex items-center gap-1.5"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                          <span>+ Add Standard 6-Step Production Pipeline</span>
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="space-y-2.5">
+                        {steps.map((step, idx) => {
+                          const isDone = step.completed && Boolean(step.completedDate);
+                          const inputKey = `${currentJob.id}-${step.id}`;
+                          const currentInputValue = inlineDateInputs[inputKey] || todayIso;
+
+                          return (
+                            <div
+                              key={step.id}
+                              className={`p-3.5 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition-colors ${
+                                isDone
+                                  ? 'bg-emerald-950/20 border-emerald-800/60'
+                                  : 'bg-slate-950 border-slate-800 hover:border-slate-700'
+                              }`}
+                            >
+                              {/* Step Index & Name */}
+                              <div className="flex items-center gap-3">
+                                <span className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold font-mono shrink-0 ${
+                                  isDone
+                                    ? 'bg-emerald-500 text-slate-950'
+                                    : 'bg-slate-800 text-slate-300'
+                                }`}>
+                                  {idx + 1}
+                                </span>
+                                <div>
+                                  <div className="text-xs sm:text-sm font-bold text-white flex items-center gap-2">
+                                    <span>{step.name}</span>
+                                    {isDone && (
+                                      <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+                                        Completed
+                                      </span>
+                                    )}
+                                  </div>
+                                  <span className="text-[11px] text-slate-500 font-mono">
+                                    Stage {idx + 1} of {totalCount}
+                                  </span>
+                                </div>
+                              </div>
+
+                              {/* OPTION BESIDE JOB TO MARK PROCESS AS DATE */}
+                              <div className="flex flex-wrap items-center gap-2">
+                                {isDone ? (
+                                  /* Completed Badge with Date and Reset option */
+                                  <div className="flex items-center gap-2">
+                                    <div className="px-3 py-1.5 rounded-lg bg-emerald-950/70 border border-emerald-700 text-emerald-300 text-xs font-mono font-bold flex items-center gap-1.5 shadow-xs">
+                                      <Calendar className="w-3.5 h-3.5 text-emerald-400" />
+                                      <span>Date Marked: {step.completedDate}</span>
+                                    </div>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleUnmarkProcessDate(currentJob.id, step.id)}
+                                      className="text-[11px] text-slate-400 hover:text-amber-300 underline cursor-pointer px-1 py-0.5"
+                                      title="Reset this step to pending"
+                                    >
+                                      Change / Reset
+                                    </button>
+                                  </div>
+                                ) : (
+                                  /* Date Picker & Mark as Date Button */
+                                  <div className="flex items-center gap-1.5">
+                                    <div className="flex items-center gap-1 bg-slate-900 border border-slate-700 rounded-lg px-2 py-1">
+                                      <Calendar className="w-3.5 h-3.5 text-teal-400 shrink-0" />
+                                      <input
+                                        type="date"
+                                        value={currentInputValue}
+                                        onChange={(e) =>
+                                          setInlineDateInputs((prev) => ({
+                                            ...prev,
+                                            [inputKey]: e.target.value,
+                                          }))
+                                        }
+                                        className="bg-transparent text-xs text-white [color-scheme:dark] focus:outline-none"
+                                      />
+                                    </div>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleMarkProcessDate(currentJob.id, step.id, currentInputValue)}
+                                      className="px-3 py-1.5 bg-teal-600 hover:bg-teal-500 active:bg-teal-700 text-white rounded-lg text-xs font-bold transition-colors cursor-pointer flex items-center gap-1.5 shadow-sm"
+                                      title="Mark this process completed with the selected date"
+                                    >
+                                      <Check className="w-3.5 h-3.5" />
+                                      <span>Mark as Date</span>
+                                    </button>
+                                  </div>
+                                )}
+
+                                {/* Remove Step Button */}
+                                <button
+                                  type="button"
+                                  onClick={() => handleRemoveProcessFromJob(currentJob.id, step.id)}
+                                  className="p-1.5 text-slate-500 hover:text-rose-400 rounded-lg hover:bg-slate-800 transition-colors cursor-pointer"
+                                  title="Remove this process step"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+
+                        {/* Automatic completion callout when all processes completed */}
+                        {isAllDone && (
+                          <div className="p-4 rounded-xl bg-emerald-950/50 border border-emerald-600/80 text-emerald-200 text-xs sm:text-sm flex items-center gap-3 animate-in fade-in">
+                            <CheckCircle2 className="w-6 h-6 text-emerald-400 shrink-0" />
+                            <div>
+                              <strong className="font-bold text-white block">
+                                All processes for "{currentJob.jobName}" are completed!
+                              </strong>
+                              <span className="text-emerald-300 text-xs">
+                                As requested, this job has been automatically updated to <strong>COMPLETED</strong> in the factory database.
+                              </span>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
+
+          {/* Section 2: Master Process Operations Board (All Jobs) */}
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-sm space-y-4 p-5 sm:p-6">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-800">
+              <div>
+                <h3 className="text-base font-bold text-white">All Jobs Process Pipeline Board</h3>
+                <p className="text-xs text-slate-400">
+                  Real-time overview of all jobs. Mark dates beside any job directly.
+                </p>
+              </div>
+
+              {/* Filters */}
+              <div className="flex items-center gap-2">
+                <div className="relative">
+                  <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input
+                    type="text"
+                    value={processSearch}
+                    onChange={(e) => setProcessSearch(e.target.value)}
+                    placeholder="Search jobs..."
+                    className="pl-8 pr-3 py-1.5 bg-slate-950 border border-slate-800 rounded-xl text-xs text-white focus:outline-none focus:border-teal-400"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setProcessStatusFilter('all')}
+                  className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold cursor-pointer ${
+                    processStatusFilter === 'all'
+                      ? 'bg-teal-600 text-white'
+                      : 'bg-slate-950 text-slate-400 hover:text-white'
+                  }`}
+                >
+                  All ({jobs.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setProcessStatusFilter('pending')}
+                  className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold cursor-pointer ${
+                    processStatusFilter === 'pending'
+                      ? 'bg-amber-600 text-white'
+                      : 'bg-slate-950 text-slate-400 hover:text-white'
+                  }`}
+                >
+                  Pending
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setProcessStatusFilter('completed')}
+                  className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold cursor-pointer ${
+                    processStatusFilter === 'completed'
+                      ? 'bg-emerald-600 text-white'
+                      : 'bg-slate-950 text-slate-400 hover:text-white'
+                  }`}
+                >
+                  Completed
+                </button>
+              </div>
+            </div>
+
+            {/* Jobs List with Pipeline Beside Each Job */}
+            <div className="space-y-3">
+              {filteredProcessJobs.length === 0 ? (
+                <div className="py-12 text-center text-slate-500">
+                  <Workflow className="w-8 h-8 mx-auto text-slate-600 mb-2" />
+                  <p className="text-sm font-medium text-slate-400">No jobs matching filters</p>
+                </div>
+              ) : (
+                filteredProcessJobs.map((job) => {
+                  const jobSteps = job.processes || [];
+                  const completedSteps = jobSteps.filter((s) => s.completed && Boolean(s.completedDate));
+                  const isDone = jobSteps.length > 0 && completedSteps.length === jobSteps.length;
+                  const isSelected = selectedProcessJobId === job.id;
+
+                  return (
+                    <div
+                      key={job.id}
+                      className={`p-4 rounded-xl border transition-all ${
+                        isSelected
+                          ? 'border-teal-500/80 bg-slate-950/90 shadow-md ring-1 ring-teal-500/30'
+                          : isDone
+                          ? 'border-emerald-800/40 bg-slate-950/60'
+                          : 'border-slate-800 bg-slate-950/40 hover:border-slate-700'
+                      }`}
+                    >
+                      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+                        {/* Job Overview */}
+                        <div className="space-y-1 min-w-[220px]">
+                          <div className="flex items-center gap-2">
+                            <span className="font-bold text-white text-sm">{job.jobName}</span>
+                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold font-mono border ${
+                              isDone || job.status === 'Completed'
+                                ? 'bg-emerald-950 text-emerald-300 border-emerald-800'
+                                : 'bg-amber-950 text-amber-300 border-amber-800'
+                            }`}>
+                              {isDone || job.status === 'Completed' ? '✅ Completed' : '⏳ Pending'}
+                            </span>
+                          </div>
+                          <div className="text-[11px] text-slate-400">
+                            {job.jobType} · <span className="font-mono text-slate-300">{job.jobPlacement} Line</span>
+                          </div>
+                        </div>
+
+                        {/* Pipeline Steps Beside Job */}
+                        <div className="flex-1 overflow-x-auto pb-1 lg:pb-0">
+                          {jobSteps.length === 0 ? (
+                            <div className="flex items-center gap-2 text-xs text-slate-500 italic">
+                              <span>No processes assigned yet.</span>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setSelectedProcessJobId(job.id);
+                                  handleAddStandardPipeline(job.id);
+                                }}
+                                className="text-teal-400 hover:text-teal-300 font-semibold underline cursor-pointer"
+                              >
+                                + Add Standard Pipeline
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-2">
+                              {jobSteps.map((step, sIdx) => {
+                                const stepCompleted = step.completed && Boolean(step.completedDate);
+                                return (
+                                  <div
+                                    key={step.id}
+                                    className={`px-2.5 py-1.5 rounded-lg border text-xs font-medium shrink-0 flex items-center gap-1.5 ${
+                                      stepCompleted
+                                        ? 'bg-emerald-950/50 text-emerald-300 border-emerald-700'
+                                        : 'bg-slate-900 text-slate-300 border-slate-800'
+                                    }`}
+                                  >
+                                    <span className={`w-4 h-4 rounded-full flex items-center justify-center text-[10px] font-bold font-mono ${
+                                      stepCompleted ? 'bg-emerald-500 text-slate-950' : 'bg-slate-800 text-slate-400'
+                                    }`}>
+                                      {sIdx + 1}
+                                    </span>
+                                    <span>{step.name}</span>
+                                    {stepCompleted ? (
+                                      <span className="text-[10px] font-mono text-emerald-400 font-bold">
+                                        📅 {step.completedDate}
+                                      </span>
+                                    ) : (
+                                      <button
+                                        type="button"
+                                        onClick={() => handleMarkProcessDate(job.id, step.id, todayIso)}
+                                        className="text-[10px] px-1.5 py-0.5 rounded bg-teal-500/20 hover:bg-teal-500/40 text-teal-300 border border-teal-500/30 cursor-pointer font-bold"
+                                        title={`Mark completed today (${todayIso})`}
+                                      >
+                                        Mark Today
+                                      </button>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Action: Manage / Select in Editor */}
+                        <div className="flex items-center gap-2 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedProcessJobId(job.id);
+                              window.scrollTo({ top: 0, behavior: 'smooth' });
+                            }}
+                            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer flex items-center gap-1 ${
+                              isSelected
+                                ? 'bg-teal-600 text-white font-bold'
+                                : 'bg-slate-800 text-slate-300 hover:text-white hover:bg-slate-700'
+                            }`}
+                          >
+                            <Workflow className="w-3.5 h-3.5" />
+                            <span>{isSelected ? 'Managing' : 'Manage Processes'}</span>
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
             </div>
           </div>
 
@@ -2791,6 +3742,61 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
                       onChange={(e) => setDieQuantity(Number(e.target.value))}
                       className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-xs text-white font-mono focus:outline-none focus:border-purple-500"
                     />
+                  </div>
+
+                  {/* Optional Die Tool Photo Upload */}
+                  <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
+                        <Camera className="w-3.5 h-3.5 text-purple-400" />
+                        <span>Die Tool Photo / Proof (Optional)</span>
+                      </label>
+                      {dieAddPhotoUrl && (
+                        <button
+                          type="button"
+                          onClick={() => setDieAddPhotoUrl('')}
+                          className="text-[11px] text-rose-400 hover:text-rose-300 flex items-center gap-1 cursor-pointer"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                          <span>Remove</span>
+                        </button>
+                      )}
+                    </div>
+                    {dieAddPhotoUrl ? (
+                      <div className="flex items-center gap-3 p-2 bg-slate-900 border border-purple-500/30 rounded-xl">
+                        <img
+                          src={dieAddPhotoUrl}
+                          alt="Die Preview"
+                          className="w-14 h-14 object-cover rounded-lg border border-slate-700"
+                        />
+                        <div className="text-xs space-y-0.5">
+                          <span className="text-purple-300 font-semibold block">Photo Attached</span>
+                          <label className="text-[11px] text-purple-400 hover:text-purple-300 underline cursor-pointer">
+                            Change photo
+                            <input
+                              type="file"
+                              accept="image/*"
+                              onChange={handleDieAddPhotoUpload}
+                              className="hidden"
+                            />
+                          </label>
+                        </div>
+                      </div>
+                    ) : (
+                      <label className="flex flex-col items-center justify-center p-3 border-2 border-dashed border-slate-800 hover:border-purple-500/60 rounded-xl bg-slate-900/40 hover:bg-purple-950/20 cursor-pointer transition-colors group">
+                        <div className="flex items-center gap-2 text-slate-400 group-hover:text-purple-300 text-xs">
+                          <Camera className="w-4 h-4 text-slate-500 group-hover:text-purple-400" />
+                          <span className="font-medium">Upload Die Tool Photo</span>
+                        </div>
+                        <span className="text-[10px] text-slate-500 mt-0.5">PNG, JPG, or WEBP (Optional)</span>
+                        <input
+                          type="file"
+                          accept="image/*"
+                          onChange={handleDieAddPhotoUpload}
+                          className="hidden"
+                        />
+                      </label>
+                    )}
                   </div>
                 </>
               ) : (
@@ -2999,6 +4005,61 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
                 </div>
               </div>
 
+              {/* Optional Photo for Stock or Die Tool */}
+              <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
+                    <Camera className="w-3.5 h-3.5 text-purple-400" />
+                    <span>Tool / Material Photo (Optional)</span>
+                  </label>
+                  {stockForm.photoUrl && (
+                    <button
+                      type="button"
+                      onClick={() => setStockForm((prev) => ({ ...prev, photoUrl: '' }))}
+                      className="text-[11px] text-rose-400 hover:text-rose-300 flex items-center gap-1 cursor-pointer"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                      <span>Remove</span>
+                    </button>
+                  )}
+                </div>
+                {stockForm.photoUrl ? (
+                  <div className="flex items-center gap-3 p-2 bg-slate-900 border border-purple-500/30 rounded-xl">
+                    <img
+                      src={stockForm.photoUrl}
+                      alt="Preview"
+                      className="w-14 h-14 object-cover rounded-lg border border-slate-700"
+                    />
+                    <div className="text-xs space-y-0.5">
+                      <span className="text-purple-300 font-semibold block">Photo Uploaded</span>
+                      <label className="text-[11px] text-purple-400 hover:text-purple-300 underline cursor-pointer">
+                        Change photo
+                        <input
+                          type="file"
+                          accept="image/*"
+                          onChange={handleEditStockPhotoUpload}
+                          className="hidden"
+                        />
+                      </label>
+                    </div>
+                  </div>
+                ) : (
+                  <label className="flex flex-col items-center justify-center p-3 border-2 border-dashed border-slate-800 hover:border-purple-500/60 rounded-xl bg-slate-900/40 hover:bg-purple-950/20 cursor-pointer transition-colors group">
+                    <div className="flex items-center gap-2 text-slate-400 group-hover:text-purple-300 text-xs">
+                      <Camera className="w-4 h-4 text-slate-500 group-hover:text-purple-400" />
+                      <span className="font-medium">Upload Photo / Layout Proof</span>
+                    </div>
+                    <span className="text-[10px] text-slate-500 mt-0.5">Optional image upload</span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={handleEditStockPhotoUpload}
+                      className="hidden"
+                    />
+                  </label>
+                )}
+              </div>
+
               <div className="flex items-center justify-end gap-2 pt-4 border-t border-slate-800">
                 <button
                   type="button"
@@ -3158,6 +4219,61 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
                     <span>{pressForm.isUrgent ? '🔥 Mark Urgent' : 'Normal'}</span>
                   </button>
                 </div>
+              </div>
+
+              {/* Optional Press Photo Upload */}
+              <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
+                    <Camera className="w-3.5 h-3.5 text-amber-400" />
+                    <span>Press Run / Print Proof Photo (Optional)</span>
+                  </label>
+                  {pressForm.pressPhotoUrl && (
+                    <button
+                      type="button"
+                      onClick={() => setPressForm((prev) => ({ ...prev, pressPhotoUrl: '' }))}
+                      className="text-[11px] text-rose-400 hover:text-rose-300 flex items-center gap-1 cursor-pointer"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                      <span>Remove</span>
+                    </button>
+                  )}
+                </div>
+                {pressForm.pressPhotoUrl ? (
+                  <div className="flex items-center gap-3 p-2 bg-slate-900 border border-amber-500/30 rounded-xl">
+                    <img
+                      src={pressForm.pressPhotoUrl}
+                      alt="Press Proof Preview"
+                      className="w-14 h-14 object-cover rounded-lg border border-slate-700"
+                    />
+                    <div className="text-xs space-y-0.5">
+                      <span className="text-amber-300 font-semibold block">Photo Attached</span>
+                      <label className="text-[11px] text-amber-400 hover:text-amber-300 underline cursor-pointer">
+                        Change photo
+                        <input
+                          type="file"
+                          accept="image/*"
+                          onChange={handlePressPhotoUpload}
+                          className="hidden"
+                        />
+                      </label>
+                    </div>
+                  </div>
+                ) : (
+                  <label className="flex flex-col items-center justify-center p-3 border-2 border-dashed border-slate-800 hover:border-amber-500/60 rounded-xl bg-slate-900/40 hover:bg-amber-950/20 cursor-pointer transition-colors group">
+                    <div className="flex items-center gap-2 text-slate-400 group-hover:text-amber-300 text-xs">
+                      <Camera className="w-4 h-4 text-slate-500 group-hover:text-amber-400" />
+                      <span className="font-medium">Upload Press Run Proof / Plate Photo</span>
+                    </div>
+                    <span className="text-[10px] text-slate-500 mt-0.5">PNG, JPG, or WEBP (Optional)</span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={handlePressPhotoUpload}
+                      className="hidden"
+                    />
+                  </label>
+                )}
               </div>
 
               <div className="flex items-center justify-end gap-2 pt-4 border-t border-slate-800">
@@ -3468,6 +4584,40 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
                   )}
                 </div>
 
+                {/* Optional Stock/Material Photo Card */}
+                {item.photoUrl && (
+                  <div className="p-3.5 rounded-xl bg-slate-950 border border-sky-500/30 space-y-2">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-bold text-sky-300 flex items-center gap-1.5">
+                        <Camera className="w-3.5 h-3.5 text-sky-400" />
+                        <span>Material / Board Photo</span>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setPreviewImage({ url: item.photoUrl!, title: `${item.stockType} Proof` })}
+                        className="text-[11px] text-sky-400 hover:text-sky-300 underline font-medium cursor-pointer"
+                      >
+                        View Full Size
+                      </button>
+                    </div>
+                    <div 
+                      onClick={() => setPreviewImage({ url: item.photoUrl!, title: `${item.stockType} Proof` })}
+                      className="cursor-pointer group relative overflow-hidden rounded-lg border border-slate-800"
+                    >
+                      <img
+                        src={item.photoUrl}
+                        alt="Material Proof"
+                        className="w-full h-40 object-cover group-hover:scale-105 transition-transform duration-200"
+                      />
+                      <div className="absolute inset-0 bg-slate-950/30 group-hover:bg-transparent transition-colors flex items-center justify-center">
+                        <span className="px-2.5 py-1 rounded-md bg-slate-950/80 text-[11px] text-sky-200 opacity-0 group-hover:opacity-100 transition-opacity font-semibold">
+                          Click to enlarge 🔍
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 {/* Quick Action Buttons */}
                 <div className="space-y-2.5">
                   <div className="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
@@ -3633,6 +4783,40 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
                   )}
                 </div>
 
+                {/* Optional Die Tool Photo Card */}
+                {item.photoUrl && (
+                  <div className="p-3.5 rounded-xl bg-slate-950 border border-purple-500/30 space-y-2">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-bold text-purple-300 flex items-center gap-1.5">
+                        <Camera className="w-3.5 h-3.5 text-purple-400" />
+                        <span>Die Tool Photo / Proof</span>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setPreviewImage({ url: item.photoUrl!, title: `${item.dieMaker || 'Die Tool'} Proof` })}
+                        className="text-[11px] text-purple-400 hover:text-purple-300 underline font-medium cursor-pointer"
+                      >
+                        View Full Size
+                      </button>
+                    </div>
+                    <div 
+                      onClick={() => setPreviewImage({ url: item.photoUrl!, title: `${item.dieMaker || 'Die Tool'} Proof` })}
+                      className="cursor-pointer group relative overflow-hidden rounded-lg border border-slate-800"
+                    >
+                      <img
+                        src={item.photoUrl}
+                        alt="Die Tool Proof"
+                        className="w-full h-40 object-cover group-hover:scale-105 transition-transform duration-200"
+                      />
+                      <div className="absolute inset-0 bg-slate-950/30 group-hover:bg-transparent transition-colors flex items-center justify-center">
+                        <span className="px-2.5 py-1 rounded-md bg-slate-950/80 text-[11px] text-purple-200 opacity-0 group-hover:opacity-100 transition-opacity font-semibold">
+                          Click to enlarge 🔍
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 {/* Quick Action Buttons */}
                 <div className="space-y-2.5">
                   <div className="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
@@ -3790,6 +4974,40 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
                   )}
                 </div>
 
+                {/* Optional Press Run / Proof Photo Card */}
+                {job.pressPhotoUrl && (
+                  <div className="p-3.5 rounded-xl bg-slate-950 border border-amber-500/30 space-y-2">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-bold text-amber-300 flex items-center gap-1.5">
+                        <Camera className="w-3.5 h-3.5 text-amber-400" />
+                        <span>Press Run / Print Proof Photo</span>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setPreviewImage({ url: job.pressPhotoUrl!, title: `${job.jobName} - Press Run Proof` })}
+                        className="text-[11px] text-amber-400 hover:text-amber-300 underline font-medium cursor-pointer"
+                      >
+                        View Full Size
+                      </button>
+                    </div>
+                    <div 
+                      onClick={() => setPreviewImage({ url: job.pressPhotoUrl!, title: `${job.jobName} - Press Run Proof` })}
+                      className="cursor-pointer group relative overflow-hidden rounded-lg border border-slate-800"
+                    >
+                      <img
+                        src={job.pressPhotoUrl}
+                        alt="Press Proof"
+                        className="w-full h-40 object-cover group-hover:scale-105 transition-transform duration-200"
+                      />
+                      <div className="absolute inset-0 bg-slate-950/30 group-hover:bg-transparent transition-colors flex items-center justify-center">
+                        <span className="px-2.5 py-1 rounded-md bg-slate-950/80 text-[11px] text-amber-200 opacity-0 group-hover:opacity-100 transition-opacity font-semibold">
+                          Click to enlarge 🔍
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 {/* Quick Action Buttons */}
                 <div className="space-y-2.5">
                   <div className="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
@@ -3879,6 +5097,52 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
           </div>
         );
       })()}
+
+      {/* FULL-SIZE PHOTO PREVIEW LIGHTBOX */}
+      {previewImage && (
+        <div 
+          className="fixed inset-0 z-70 flex items-center justify-center p-4 bg-slate-950/90 backdrop-blur-md animate-in fade-in duration-150"
+          onClick={() => setPreviewImage(null)}
+        >
+          <div 
+            className="relative max-w-4xl max-h-[90vh] bg-slate-900 border border-slate-700 rounded-2xl overflow-hidden shadow-2xl flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-5 py-3 border-b border-slate-800 flex items-center justify-between bg-slate-950/80">
+              <div className="flex items-center gap-2">
+                <Camera className="w-4 h-4 text-amber-400" />
+                <h3 className="text-xs sm:text-sm font-bold text-white truncate max-w-md">
+                  {previewImage.title}
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPreviewImage(null)}
+                className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="p-4 flex items-center justify-center overflow-auto bg-slate-950/60 max-h-[75vh]">
+              <img
+                src={previewImage.url}
+                alt={previewImage.title}
+                className="max-h-[70vh] w-auto max-w-full object-contain rounded-xl border border-slate-800 shadow-xl"
+              />
+            </div>
+            <div className="px-5 py-2.5 bg-slate-950 border-t border-slate-800 flex items-center justify-between text-xs">
+              <span className="text-slate-400 text-[11px]">High-resolution tooling / proof capture</span>
+              <button
+                type="button"
+                onClick={() => setPreviewImage(null)}
+                className="px-4 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-xs font-semibold cursor-pointer"
+              >
+                Close Fullscreen
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );

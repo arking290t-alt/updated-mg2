@@ -20,9 +20,12 @@ import {
   Flame,
   CheckCircle2,
   ExternalLink,
-  FileText
+  FileText,
+  Workflow,
+  Camera,
+  Check
 } from 'lucide-react';
-import { CorrugationJob, InventoryItem, JobPlacement, JobStatus } from '../types/job';
+import { CorrugationJob, InventoryItem, JobPlacement, JobStatus, JobProcessStep } from '../types/job';
 
 interface PendingJobsViewProps {
   jobs: CorrugationJob[];
@@ -65,6 +68,101 @@ export const PendingJobsView: React.FC<PendingJobsViewProps> = ({
   // Separate Popup Box state for clicked ordered inventory or press detail
   const [selectedInventoryItemPopup, setSelectedInventoryItemPopup] = useState<InventoryItem | null>(null);
   const [selectedPressDetailPopup, setSelectedPressDetailPopup] = useState<CorrugationJob | null>(null);
+
+  // Process Quick Manager Modal State for Job
+  const [processModalJob, setProcessModalJob] = useState<CorrugationJob | null>(null);
+  const [quickProcessInput, setQuickProcessInput] = useState<string>('');
+  const [previewImage, setPreviewImage] = useState<{ url: string; title: string } | null>(null);
+  const [processDateInputs, setProcessDateInputs] = useState<Record<string, string>>({});
+
+  const todayIso = new Date().toISOString().split('T')[0];
+
+  const handleMarkStepDate = async (job: CorrugationJob, stepId: string, dateStr?: string) => {
+    if (!onUpdateJobDetails) return;
+    const chosenDate = dateStr || todayIso;
+    const currentSteps = job.processes || [];
+    const updatedSteps: JobProcessStep[] = currentSteps.map((s) => {
+      if (s.id === stepId) {
+        return { ...s, completed: true, completedDate: chosenDate };
+      }
+      return s;
+    });
+
+    const allDone = updatedSteps.length > 0 && updatedSteps.every((p) => p.completed && Boolean(p.completedDate));
+    const nextStatus: JobStatus = allDone ? 'Completed' : job.status;
+
+    await onUpdateJobDetails(job.id, {
+      processes: updatedSteps,
+      status: nextStatus,
+    });
+
+    if (processModalJob?.id === job.id) {
+      setProcessModalJob({ ...processModalJob, processes: updatedSteps, status: nextStatus });
+    }
+    if (detailModalJob?.id === job.id) {
+      setDetailModalJob({ ...detailModalJob, processes: updatedSteps, status: nextStatus });
+    }
+  };
+
+  const handleUnmarkStepDate = async (job: CorrugationJob, stepId: string) => {
+    if (!onUpdateJobDetails) return;
+    const currentSteps = job.processes || [];
+    const updatedSteps: JobProcessStep[] = currentSteps.map((s) => {
+      if (s.id === stepId) {
+        return { ...s, completed: false, completedDate: undefined };
+      }
+      return s;
+    });
+
+    const nextStatus: JobStatus = job.status === 'Completed' ? 'Pending' : job.status;
+
+    await onUpdateJobDetails(job.id, {
+      processes: updatedSteps,
+      status: nextStatus,
+    });
+
+    if (processModalJob?.id === job.id) {
+      setProcessModalJob({ ...processModalJob, processes: updatedSteps, status: nextStatus });
+    }
+    if (detailModalJob?.id === job.id) {
+      setDetailModalJob({ ...detailModalJob, processes: updatedSteps, status: nextStatus });
+    }
+  };
+
+  const handleAddProcessToJob = async (job: CorrugationJob, processName: string) => {
+    if (!onUpdateJobDetails || !processName.trim()) return;
+    const trimmed = processName.trim();
+    const currentSteps = job.processes || [];
+    const newStep: JobProcessStep = {
+      id: `proc_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      name: trimmed,
+      completed: false,
+      sequence: currentSteps.length + 1,
+    };
+    const updatedSteps = [...currentSteps, newStep];
+    await onUpdateJobDetails(job.id, { processes: updatedSteps });
+
+    if (processModalJob?.id === job.id) {
+      setProcessModalJob({ ...processModalJob, processes: updatedSteps });
+    }
+    if (detailModalJob?.id === job.id) {
+      setDetailModalJob({ ...detailModalJob, processes: updatedSteps });
+    }
+    setQuickProcessInput('');
+  };
+
+  const handleRemoveStep = async (job: CorrugationJob, stepId: string) => {
+    if (!onUpdateJobDetails) return;
+    const updatedSteps = (job.processes || []).filter((s) => s.id !== stepId);
+    await onUpdateJobDetails(job.id, { processes: updatedSteps });
+
+    if (processModalJob?.id === job.id) {
+      setProcessModalJob({ ...processModalJob, processes: updatedSteps });
+    }
+    if (detailModalJob?.id === job.id) {
+      setDetailModalJob({ ...detailModalJob, processes: updatedSteps });
+    }
+  };
 
   // Filter jobs based on search, status, and placement
   const filteredJobs = jobs.filter((job) => {
@@ -379,6 +477,31 @@ export const PendingJobsView: React.FC<PendingJobsViewProps> = ({
                     <span>Mark Not Completed</span>
                   </button>
 
+                  {/* Process Tracking Button beside job */}
+                  <button
+                    type="button"
+                    onClick={() => setProcessModalJob(job)}
+                    title={
+                      (job.processes?.length || 0) > 0
+                        ? `Processes: ${(job.processes?.filter((p) => p.completed && p.completedDate)?.length || 0)}/${job.processes?.length} dated`
+                        : 'Add and mark processes for this job'
+                    }
+                    className={`px-2.5 py-1.5 rounded-xl border text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer ${
+                      (job.processes?.length || 0) > 0
+                        ? (job.processes?.every((p) => p.completed && p.completedDate)
+                            ? 'bg-emerald-950/70 text-emerald-300 border-emerald-700/80 hover:bg-emerald-900/80'
+                            : 'bg-teal-950/70 text-teal-300 border-teal-700/80 hover:bg-teal-900/80')
+                        : 'bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-teal-300 border-slate-700'
+                    }`}
+                  >
+                    <Workflow className="w-3.5 h-3.5 text-teal-400 shrink-0" />
+                    <span className="hidden sm:inline font-mono">
+                      {(job.processes?.length || 0) > 0
+                        ? `${job.processes?.filter((p) => p.completed && p.completedDate)?.length}/${job.processes?.length} Process`
+                        : 'Process'}
+                    </span>
+                  </button>
+
                   {/* Delete Button */}
                   <button
                     onClick={() => setDeleteConfirmJob(job)}
@@ -421,6 +544,18 @@ export const PendingJobsView: React.FC<PendingJobsViewProps> = ({
                             >
                               <Eye className="w-3.5 h-3.5 text-amber-400" />
                               <span>Show Detail</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setProcessModalJob(job);
+                                setActiveMenuJobId(null);
+                              }}
+                              className="w-full px-3 py-2 text-left text-xs font-bold text-teal-400 hover:text-teal-300 hover:bg-slate-800 flex items-center gap-2 cursor-pointer transition-colors"
+                            >
+                              <Workflow className="w-3.5 h-3.5 text-teal-400" />
+                              <span>Processes & Dates</span>
                             </button>
                           </div>
 
@@ -829,6 +964,126 @@ export const PendingJobsView: React.FC<PendingJobsViewProps> = ({
                   );
                 })()}
 
+                {/* Optional Press Photo Proof */}
+                {detailModalJob.pressPhotoUrl && (
+                  <div className="p-3.5 rounded-xl bg-slate-950 border border-amber-500/30 space-y-2">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-bold text-amber-300 flex items-center gap-1.5">
+                        <Camera className="w-3.5 h-3.5 text-amber-400" />
+                        <span>Press Run / Print Proof Photo</span>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setPreviewImage({ url: detailModalJob.pressPhotoUrl!, title: `${detailModalJob.jobName} - Press Proof` })}
+                        className="text-[11px] text-amber-400 hover:text-amber-300 underline font-medium cursor-pointer"
+                      >
+                        View Full Size
+                      </button>
+                    </div>
+                    <div 
+                      onClick={() => setPreviewImage({ url: detailModalJob.pressPhotoUrl!, title: `${detailModalJob.jobName} - Press Proof` })}
+                      className="cursor-pointer group relative overflow-hidden rounded-lg border border-slate-800"
+                    >
+                      <img
+                        src={detailModalJob.pressPhotoUrl}
+                        alt="Press Proof"
+                        className="w-full h-36 object-cover group-hover:scale-105 transition-transform duration-200"
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* SECTION: MANUFACTURING PROCESSES & COMPLETION DATES */}
+                <div className="space-y-3 pt-2 border-t border-slate-800">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-xs font-bold text-teal-400 uppercase tracking-wide flex items-center gap-1.5">
+                      <Workflow className="w-3.5 h-3.5 text-teal-400" />
+                      <span>Manufacturing Process Pipeline ({(detailModalJob.processes?.filter(p => p.completed && p.completedDate)?.length || 0)}/{(detailModalJob.processes?.length || 0)} Completed)</span>
+                    </h4>
+                    <button
+                      type="button"
+                      onClick={() => setProcessModalJob(detailModalJob)}
+                      className="text-xs text-teal-400 hover:text-teal-300 underline font-semibold cursor-pointer"
+                    >
+                      Manage / Add Process
+                    </button>
+                  </div>
+
+                  {(detailModalJob.processes?.length || 0) === 0 ? (
+                    <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-between gap-3 text-xs">
+                      <span className="text-slate-400">No process steps assigned yet.</span>
+                      <button
+                        type="button"
+                        onClick={() => setProcessModalJob(detailModalJob)}
+                        className="px-3 py-1.5 rounded-lg text-xs font-bold bg-teal-600 hover:bg-teal-500 text-white cursor-pointer transition-colors"
+                      >
+                        + Add Processes
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {detailModalJob.processes?.map((proc, pIdx) => {
+                        const isDone = proc.completed && Boolean(proc.completedDate);
+                        const pKey = `${detailModalJob.id}-${proc.id}`;
+                        const dateVal = processDateInputs[pKey] || todayIso;
+
+                        return (
+                          <div
+                            key={proc.id}
+                            className={`p-3 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 transition-colors text-xs ${
+                              isDone ? 'bg-emerald-950/20 border-emerald-800/60' : 'bg-slate-950 border-slate-800'
+                            }`}
+                          >
+                            <div className="flex items-center gap-2.5">
+                              <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold font-mono ${
+                                isDone ? 'bg-emerald-500 text-slate-950' : 'bg-slate-800 text-slate-400'
+                              }`}>
+                                {pIdx + 1}
+                              </span>
+                              <span className="font-semibold text-white">{proc.name}</span>
+                            </div>
+
+                            <div className="flex items-center gap-2 self-end sm:self-auto">
+                              {isDone ? (
+                                <div className="flex items-center gap-2">
+                                  <span className="px-2.5 py-1 rounded-lg bg-emerald-950 text-emerald-300 border border-emerald-800 text-[11px] font-mono font-bold flex items-center gap-1">
+                                    <Calendar className="w-3 h-3 text-emerald-400" />
+                                    <span>{proc.completedDate}</span>
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleUnmarkStepDate(detailModalJob, proc.id)}
+                                    className="text-[10px] text-slate-400 hover:text-amber-300 underline cursor-pointer"
+                                  >
+                                    Reset
+                                  </button>
+                                </div>
+                              ) : (
+                                <div className="flex items-center gap-1.5">
+                                  <input
+                                    type="date"
+                                    value={dateVal}
+                                    onChange={(e) => setProcessDateInputs(prev => ({ ...prev, [pKey]: e.target.value }))}
+                                    className="px-2 py-0.5 rounded bg-slate-900 border border-slate-700 text-xs text-white [color-scheme:dark]"
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => handleMarkStepDate(detailModalJob, proc.id, dateVal)}
+                                    className="px-2.5 py-1 bg-teal-600 hover:bg-teal-500 text-white rounded-lg text-xs font-bold cursor-pointer transition-colors flex items-center gap-1"
+                                  >
+                                    <Check className="w-3 h-3" />
+                                    <span>Mark Date</span>
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
                 {/* SECTION: ORDERED INVENTORY (Board Stock & Die Tooling) */}
                 <div className="space-y-4 pt-2 border-t border-slate-800">
                   <div className="flex items-center justify-between">
@@ -1088,6 +1343,35 @@ export const PendingJobsView: React.FC<PendingJobsViewProps> = ({
                   </div>
                 </div>
 
+                {/* Optional Die/Material Photo */}
+                {item.photoUrl && (
+                  <div className="p-3.5 rounded-xl bg-slate-950 border border-purple-500/30 space-y-2">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-bold text-purple-300 flex items-center gap-1.5">
+                        <Camera className="w-3.5 h-3.5 text-purple-400" />
+                        <span>Tooling / Material Photo</span>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setPreviewImage({ url: item.photoUrl!, title: `${item.dieMaker || item.stockType} Proof` })}
+                        className="text-[11px] text-purple-400 hover:text-purple-300 underline font-medium cursor-pointer"
+                      >
+                        View Full Size
+                      </button>
+                    </div>
+                    <div 
+                      onClick={() => setPreviewImage({ url: item.photoUrl!, title: `${item.dieMaker || item.stockType} Proof` })}
+                      className="cursor-pointer group relative overflow-hidden rounded-lg border border-slate-800"
+                    >
+                      <img
+                        src={item.photoUrl}
+                        alt="Proof"
+                        className="w-full h-36 object-cover group-hover:scale-105 transition-transform duration-200"
+                      />
+                    </div>
+                  </div>
+                )}
+
                 {/* QUICK CONTROLS AREA */}
                 <div className="space-y-3">
                   <h4 className="text-xs font-bold text-slate-200 uppercase tracking-wider flex items-center gap-1.5">
@@ -1224,6 +1508,35 @@ export const PendingJobsView: React.FC<PendingJobsViewProps> = ({
                   </div>
                 </div>
 
+                {/* Optional Press Photo Proof */}
+                {job.pressPhotoUrl && (
+                  <div className="p-3.5 rounded-xl bg-slate-950 border border-amber-500/30 space-y-2">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-bold text-amber-300 flex items-center gap-1.5">
+                        <Camera className="w-3.5 h-3.5 text-amber-400" />
+                        <span>Press Run / Print Proof Photo</span>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setPreviewImage({ url: job.pressPhotoUrl!, title: `${job.jobName} - Press Run Proof` })}
+                        className="text-[11px] text-amber-400 hover:text-amber-300 underline font-medium cursor-pointer"
+                      >
+                        View Full Size
+                      </button>
+                    </div>
+                    <div 
+                      onClick={() => setPreviewImage({ url: job.pressPhotoUrl!, title: `${job.jobName} - Press Run Proof` })}
+                      className="cursor-pointer group relative overflow-hidden rounded-lg border border-slate-800"
+                    >
+                      <img
+                        src={job.pressPhotoUrl}
+                        alt="Press Proof"
+                        className="w-full h-36 object-cover group-hover:scale-105 transition-transform duration-200"
+                      />
+                    </div>
+                  </div>
+                )}
+
                 {/* QUICK CONTROLS AREA */}
                 <div className="space-y-3">
                   <h4 className="text-xs font-bold text-slate-200 uppercase tracking-wider flex items-center gap-1.5">
@@ -1290,6 +1603,288 @@ export const PendingJobsView: React.FC<PendingJobsViewProps> = ({
           </div>
         );
       })()}
+
+      {/* QUICK PROCESS MANAGER & DATE TRACKER MODAL (BESIDE JOB) */}
+      {processModalJob && (() => {
+        const job = processModalJob;
+        const steps = job.processes || [];
+        const completedSteps = steps.filter((s) => s.completed && Boolean(s.completedDate));
+        const allCompleted = steps.length > 0 && steps.every((s) => s.completed && Boolean(s.completedDate));
+        const percent = steps.length > 0 ? Math.round((completedSteps.length / steps.length) * 100) : 0;
+
+        const defaultPipelines = [
+          'Pre-Press & Plates',
+          'Flexo Printing',
+          'Flute Lamination',
+          'Rotary Die-Cutting',
+          'Slotting & Creasing',
+          'Folding & Gluing',
+          'Quality Bundling & Palletizing',
+        ];
+
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-150">
+            <div className="w-full max-w-2xl bg-slate-900 border border-teal-500/30 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+              {/* Header */}
+              <div className="px-6 py-4 border-b border-slate-800 flex items-center justify-between bg-slate-950/70">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-xl bg-teal-500/20 text-teal-300 border border-teal-500/30 flex items-center justify-center">
+                    <Workflow className="w-5 h-5 text-teal-400" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-bold text-white flex items-center gap-2">
+                      <span>Process Tracking: {job.jobName}</span>
+                    </h3>
+                    <p className="text-xs text-slate-400 font-mono">
+                      Type: {job.jobType} · {job.jobPlacement} Line · Status: <span className={job.status === 'Completed' ? 'text-emerald-400 font-bold' : 'text-amber-400 font-bold'}>{job.status}</span>
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setProcessModalJob(null)}
+                  className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition-colors cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Body */}
+              <div className="p-6 space-y-5 overflow-y-auto">
+                {/* Progress bar */}
+                <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-2">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="font-semibold text-slate-300">Pipeline Completion</span>
+                    <span className="font-mono font-bold text-teal-400">
+                      {completedSteps.length} of {steps.length} processes completed ({percent}%)
+                    </span>
+                  </div>
+                  <div className="w-full h-2.5 bg-slate-800 rounded-full overflow-hidden">
+                    <div
+                      className={`h-full transition-all duration-300 ${allCompleted ? 'bg-emerald-500' : 'bg-teal-500'}`}
+                      style={{ width: `${percent}%` }}
+                    />
+                  </div>
+                  {allCompleted && (
+                    <div className="p-3 rounded-lg bg-emerald-950/60 border border-emerald-600 text-emerald-200 text-xs flex items-center gap-2 animate-in fade-in">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                      <span>🎉 All processes finished! Job has been automatically marked as <strong>COMPLETED</strong>.</span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Add Custom Process (Save & Select) */}
+                <div className="p-4 rounded-xl bg-slate-950 border border-teal-500/20 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-teal-300 uppercase tracking-wide flex items-center gap-1.5">
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>Add Process to Job (Save & Select)</span>
+                    </label>
+                  </div>
+
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={quickProcessInput}
+                      onChange={(e) => setQuickProcessInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          handleAddProcessToJob(job, quickProcessInput);
+                        }
+                      }}
+                      placeholder="Type process name (e.g. UV Varnishing, Box Gluing, Die Punching)..."
+                      className="flex-1 px-3.5 py-2 bg-slate-900 border border-slate-700 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-teal-400"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => handleAddProcessToJob(job, quickProcessInput)}
+                      className="px-4 py-2 bg-teal-600 hover:bg-teal-500 text-white rounded-xl text-xs font-bold transition-colors cursor-pointer flex items-center gap-1 shadow-sm shrink-0"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>Save & Select</span>
+                    </button>
+                  </div>
+
+                  {/* Quick Preset Buttons */}
+                  <div>
+                    <span className="text-[11px] text-slate-400 block mb-1.5">Quick add common corrugation processes:</span>
+                    <div className="flex flex-wrap gap-1.5">
+                      {defaultPipelines.map((pName) => {
+                        const isAdded = steps.some(s => s.name.toLowerCase() === pName.toLowerCase());
+                        return (
+                          <button
+                            key={pName}
+                            type="button"
+                            onClick={() => handleAddProcessToJob(job, pName)}
+                            className={`px-2.5 py-1 rounded-lg text-[11px] font-medium transition-colors cursor-pointer flex items-center gap-1 border ${
+                              isAdded
+                                ? 'bg-teal-950/40 text-teal-300 border-teal-800/60'
+                                : 'bg-slate-900 text-slate-300 border-slate-800 hover:border-teal-500/50 hover:text-white'
+                            }`}
+                          >
+                            <Plus className="w-3 h-3 text-teal-400" />
+                            <span>{pName}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Assigned Processes List with Option Beside to Mark as Date */}
+                <div className="space-y-2.5">
+                  <div className="flex items-center justify-between text-xs font-bold text-slate-300 uppercase tracking-wide">
+                    <span>Assigned Process Steps</span>
+                    <span className="font-mono text-slate-400">{completedSteps.length}/{steps.length} Dated</span>
+                  </div>
+
+                  {steps.length === 0 ? (
+                    <div className="p-6 rounded-xl bg-slate-950 border border-slate-800 text-center space-y-1">
+                      <p className="text-xs text-slate-400">No process steps added to this job yet.</p>
+                      <p className="text-[11px] text-slate-500">Use the input above to type and save processes or click any preset.</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {steps.map((step, idx) => {
+                        const isDone = step.completed && Boolean(step.completedDate);
+                        const inputKey = `${job.id}-${step.id}`;
+                        const dateVal = processDateInputs[inputKey] || todayIso;
+
+                        return (
+                          <div
+                            key={step.id}
+                            className={`p-3.5 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs transition-colors ${
+                              isDone ? 'bg-emerald-950/20 border-emerald-800/60' : 'bg-slate-950 border-slate-800'
+                            }`}
+                          >
+                            <div className="flex items-center gap-2.5">
+                              <span className={`w-6 h-6 rounded-full flex items-center justify-center font-bold font-mono text-[11px] ${
+                                isDone ? 'bg-emerald-500 text-slate-950' : 'bg-slate-800 text-slate-300'
+                              }`}>
+                                {idx + 1}
+                              </span>
+                              <div>
+                                <span className="font-bold text-white block text-sm">{step.name}</span>
+                                <span className="text-[10px] text-slate-500 font-mono">Stage {idx + 1} of {steps.length}</span>
+                              </div>
+                            </div>
+
+                            {/* Option beside job to mark process as date */}
+                            <div className="flex items-center gap-2 self-end sm:self-auto">
+                              {isDone ? (
+                                <div className="flex items-center gap-2">
+                                  <div className="px-3 py-1.5 rounded-lg bg-emerald-950 text-emerald-300 border border-emerald-700 text-xs font-mono font-bold flex items-center gap-1.5">
+                                    <Calendar className="w-3.5 h-3.5 text-emerald-400" />
+                                    <span>Date: {step.completedDate}</span>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleUnmarkStepDate(job, step.id)}
+                                    className="text-[11px] text-slate-400 hover:text-amber-300 underline cursor-pointer"
+                                  >
+                                    Reset
+                                  </button>
+                                </div>
+                              ) : (
+                                <div className="flex items-center gap-1.5">
+                                  <input
+                                    type="date"
+                                    value={dateVal}
+                                    onChange={(e) => setProcessDateInputs(prev => ({ ...prev, [inputKey]: e.target.value }))}
+                                    className="px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-700 text-xs text-white [color-scheme:dark]"
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => handleMarkStepDate(job, step.id, dateVal)}
+                                    className="px-3 py-1 bg-teal-600 hover:bg-teal-500 text-white rounded-lg text-xs font-bold cursor-pointer transition-colors flex items-center gap-1 shadow-sm"
+                                  >
+                                    <Check className="w-3.5 h-3.5" />
+                                    <span>Mark as Date</span>
+                                  </button>
+                                </div>
+                              )}
+
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveStep(job, step.id)}
+                                className="p-1.5 text-slate-500 hover:text-rose-400 rounded-lg hover:bg-slate-800 transition-colors cursor-pointer"
+                                title="Remove process"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Footer */}
+              <div className="px-6 py-3.5 bg-slate-950 border-t border-slate-800 flex items-center justify-between">
+                <span className="text-xs text-slate-400">
+                  Completing all process steps will automatically mark the job as completed.
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setProcessModalJob(null)}
+                  className="px-5 py-2 text-xs font-bold bg-slate-800 hover:bg-slate-700 text-white rounded-xl transition-colors cursor-pointer"
+                >
+                  Done
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* FULL-SIZE PHOTO PREVIEW LIGHTBOX */}
+      {previewImage && (
+        <div 
+          className="fixed inset-0 z-70 flex items-center justify-center p-4 bg-slate-950/90 backdrop-blur-md animate-in fade-in duration-150"
+          onClick={() => setPreviewImage(null)}
+        >
+          <div 
+            className="relative max-w-4xl max-h-[90vh] bg-slate-900 border border-slate-700 rounded-2xl overflow-hidden shadow-2xl flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-5 py-3 border-b border-slate-800 flex items-center justify-between bg-slate-950/80">
+              <div className="flex items-center gap-2">
+                <Camera className="w-4 h-4 text-amber-400" />
+                <h3 className="text-xs sm:text-sm font-bold text-white truncate max-w-md">
+                  {previewImage.title}
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPreviewImage(null)}
+                className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="p-4 flex items-center justify-center overflow-auto bg-slate-950/60 max-h-[75vh]">
+              <img
+                src={previewImage.url}
+                alt={previewImage.title}
+                className="max-h-[70vh] w-auto max-w-full object-contain rounded-xl border border-slate-800 shadow-xl"
+              />
+            </div>
+            <div className="px-5 py-2.5 bg-slate-950 border-t border-slate-800 flex items-center justify-between text-xs">
+              <span className="text-slate-400 text-[11px]">High-resolution photo proof</span>
+              <button
+                type="button"
+                onClick={() => setPreviewImage(null)}
+                className="px-4 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-xs font-semibold cursor-pointer"
+              >
+                Close Fullscreen
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );

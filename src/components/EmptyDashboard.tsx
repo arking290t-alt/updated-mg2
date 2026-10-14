@@ -20,7 +20,8 @@ import {
   AlertCircle,
   BarChart3,
   Scissors,
-  Printer
+  Printer,
+  Workflow
 } from 'lucide-react';
 import { GeminiChatBot } from './GeminiChatBot';
 import { NewJobModal } from './NewJobModal';
@@ -69,7 +70,7 @@ export const EmptyDashboard: React.FC<EmptyDashboardProps> = ({ onLogout }) => {
   const [isJobsMenuExpanded, setIsJobsMenuExpanded] = useState(true);
   const [isInventoryMenuExpanded, setIsInventoryMenuExpanded] = useState(true);
   const [isDataMenuExpanded, setIsDataMenuExpanded] = useState(true);
-  const [dataTab, setDataTab] = useState<'stock' | 'die' | 'press'>('stock');
+  const [dataTab, setDataTab] = useState<'stock' | 'die' | 'press' | 'process'>('stock');
   
   // Views: dashboard | pending_jobs | order_inventory | existing_inventory | data
   const [currentView, setCurrentView] = useState<
@@ -581,6 +582,22 @@ export const EmptyDashboard: React.FC<EmptyDashboardProps> = ({ onLogout }) => {
               <Printer className="w-3.5 h-3.5 text-amber-400" />
               <span>Press Data</span>
             </button>
+
+            {/* Process Tracking */}
+            <button
+              onClick={() => {
+                setCurrentView('data');
+                setDataTab('process');
+              }}
+              className={`px-3 py-1.5 text-xs font-semibold rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap ${
+                currentView === 'data' && dataTab === 'process'
+                  ? 'bg-teal-600 text-white font-bold shadow-xs'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              <Workflow className="w-3.5 h-3.5 text-teal-400" />
+              <span>Process</span>
+            </button>
           </div>
 
           {/* Top Right: Firebase Status, User & Logout */}
@@ -900,6 +917,24 @@ export const EmptyDashboard: React.FC<EmptyDashboardProps> = ({ onLogout }) => {
                       <div className="flex items-center gap-2">
                         <Printer className="w-3.5 h-3.5 text-amber-400" />
                         <span>Press Data</span>
+                      </div>
+                    </button>
+
+                    <button
+                      onClick={() => {
+                        setCurrentView('data');
+                        setDataTab('process');
+                        setIsDrawerOpen(false);
+                      }}
+                      className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
+                        currentView === 'data' && dataTab === 'process'
+                          ? 'bg-teal-600 text-white font-bold'
+                          : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2">
+                        <Workflow className="w-3.5 h-3.5 text-teal-400" />
+                        <span>Process</span>
                       </div>
                     </button>
                   </div>
