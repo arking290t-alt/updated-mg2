@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { X, Plus, Search, Factory, Building2, Check, ChevronDown, Tag, Trash2, Printer, FileText, Camera, Image as ImageIcon } from 'lucide-react';
+import { X, Plus, Search, Factory, Building2, Check, ChevronDown, Tag, Trash2 } from 'lucide-react';
 import { CorrugationJob, JobPlacement } from '../types/job';
 
 interface NewJobModalProps {
@@ -22,40 +22,8 @@ export const NewJobModal: React.FC<NewJobModalProps> = ({
   const [jobName, setJobName] = useState('');
   const [selectedType, setSelectedType] = useState<string>('');
   const [placement, setPlacement] = useState<JobPlacement>('Factory');
-  const [isPrinted, setIsPrinted] = useState<boolean>(false);
-  const [pressPhotoUrl, setPressPhotoUrl] = useState<string>('');
   const [notes, setNotes] = useState('');
   const [jobDate, setJobDate] = useState(() => new Date().toISOString().split('T')[0]);
-
-  const handlePressPhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const img = new window.Image();
-      img.onload = () => {
-        const canvas = document.createElement('canvas');
-        const maxDim = 800;
-        let width = img.width;
-        let height = img.height;
-        if (width > height && width > maxDim) {
-          height = Math.round((height * maxDim) / width);
-          width = maxDim;
-        } else if (height > maxDim) {
-          width = Math.round((width * maxDim) / height);
-          height = maxDim;
-        }
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext('2d');
-        ctx?.drawImage(img, 0, 0, width, height);
-        const dataUrl = canvas.toDataURL('image/jpeg', 0.82);
-        setPressPhotoUrl(dataUrl);
-      };
-      img.src = event.target?.result as string;
-    };
-    reader.readAsDataURL(file);
-  };
   
   // Job Type Search & Add state
   const [typeSearch, setTypeSearch] = useState('');
@@ -119,8 +87,6 @@ export const NewJobModal: React.FC<NewJobModalProps> = ({
       jobName: jobName.trim(),
       jobType: selectedType.trim(),
       jobPlacement: placement,
-      isPrinted,
-      pressPhotoUrl: isPrinted && pressPhotoUrl ? pressPhotoUrl : undefined,
       notes: notes.trim() || undefined,
       createdAt: `${jobDate} 12:00`,
     } as any);
@@ -129,8 +95,6 @@ export const NewJobModal: React.FC<NewJobModalProps> = ({
     setJobName('');
     setSelectedType('');
     setPlacement('Factory');
-    setIsPrinted(false);
-    setPressPhotoUrl('');
     setNotes('');
     setErrorMessage('');
     onClose();
@@ -388,108 +352,6 @@ export const NewJobModal: React.FC<NewJobModalProps> = ({
                 </div>
               </button>
             </div>
-          </div>
-
-          {/* 4. Print Specification (Non-Printed vs Printed) */}
-          <div>
-            <label className="block text-xs font-semibold text-slate-200 mb-1.5">
-              Print Specification <span className="text-amber-400">*</span>
-            </label>
-            <div className="grid grid-cols-2 gap-3">
-              <button
-                type="button"
-                onClick={() => setIsPrinted(false)}
-                className={`p-3.5 rounded-xl border text-left transition-all cursor-pointer flex items-center gap-3 ${
-                  !isPrinted
-                    ? 'bg-amber-500/10 border-amber-500 text-white shadow-sm'
-                    : 'bg-slate-950 border-slate-800 text-slate-400 hover:border-slate-700'
-                }`}
-              >
-                <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
-                  !isPrinted ? 'bg-amber-500 text-slate-950 font-bold' : 'bg-slate-800 text-slate-400'
-                }`}>
-                  <FileText className="w-4 h-4" />
-                </div>
-                <div>
-                  <div className="text-xs font-bold text-white">Non-Printed</div>
-                  <div className="text-[10px] text-slate-400">Plain Kraft / No press needed</div>
-                </div>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setIsPrinted(true)}
-                className={`p-3.5 rounded-xl border text-left transition-all cursor-pointer flex items-center gap-3 ${
-                  isPrinted
-                    ? 'bg-amber-500/10 border-amber-500 text-white shadow-sm'
-                    : 'bg-slate-950 border-slate-800 text-slate-400 hover:border-slate-700'
-                }`}
-              >
-                <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
-                  isPrinted ? 'bg-amber-500 text-slate-950 font-bold' : 'bg-slate-800 text-slate-400'
-                }`}>
-                  <Printer className="w-4 h-4" />
-                </div>
-                <div>
-                  <div className="text-xs font-bold text-white">Printed</div>
-                  <div className="text-[10px] text-slate-400">Requires press allocation</div>
-                </div>
-              </button>
-            </div>
-
-            {/* Optional Press / Print Proof Photo Upload (when Printed is selected) */}
-            {isPrinted && (
-              <div className="mt-2.5 p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-2 animate-in fade-in">
-                <div className="flex items-center justify-between">
-                  <label className="text-[11px] font-semibold text-amber-300 flex items-center gap-1.5">
-                    <Camera className="w-3.5 h-3.5 text-amber-400" />
-                    <span>Press Run / Print Proof Photo (Optional)</span>
-                  </label>
-                  {pressPhotoUrl && (
-                    <button
-                      type="button"
-                      onClick={() => setPressPhotoUrl('')}
-                      className="text-[10px] text-rose-400 hover:text-rose-300 underline cursor-pointer"
-                    >
-                      Remove Photo
-                    </button>
-                  )}
-                </div>
-
-                {pressPhotoUrl ? (
-                  <div className="flex items-center gap-3">
-                    <img
-                      src={pressPhotoUrl}
-                      alt="Press Proof Preview"
-                      className="w-16 h-14 object-cover rounded-lg border border-amber-500/40 shadow-sm"
-                    />
-                    <div className="text-xs">
-                      <span className="text-amber-300 font-semibold block">Photo Attached</span>
-                      <label className="text-[11px] text-slate-400 hover:text-white underline cursor-pointer">
-                        Change photo
-                        <input
-                          type="file"
-                          accept="image/*"
-                          className="hidden"
-                          onChange={handlePressPhotoUpload}
-                        />
-                      </label>
-                    </div>
-                  </div>
-                ) : (
-                  <label className="flex items-center justify-center gap-2 p-3 rounded-xl border border-dashed border-slate-700 hover:border-amber-500/60 bg-slate-900/50 hover:bg-slate-900 text-slate-400 hover:text-white cursor-pointer transition-all text-xs">
-                    <Camera className="w-4 h-4 text-amber-400" />
-                    <span className="font-medium">Upload Press Run / Artwork Photo</span>
-                    <input
-                      type="file"
-                      accept="image/*"
-                      className="hidden"
-                      onChange={handlePressPhotoUpload}
-                    />
-                  </label>
-                )}
-              </div>
-            )}
           </div>
 
           {/* 4. Notes / Specification Details */}

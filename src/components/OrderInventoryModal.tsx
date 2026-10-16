@@ -21,9 +21,12 @@ import {
   CheckCircle2,
   Clock,
   Camera,
-  Image as ImageIcon
+  Image as ImageIcon,
+  Sparkles,
+  PackageCheck
 } from 'lucide-react';
-import { InventoryItem, CorrugationJob, StockItemEntry, INITIAL_DIE_MAKERS, INITIAL_PUNCH_TYPES } from '../types/job';
+import { InventoryItem, CorrugationJob, StockItemEntry, INITIAL_DIE_MAKERS, INITIAL_PUNCH_TYPES, formatReceivedTimestamp } from '../types/job';
+import { PhotoDropzone } from './PhotoDropzone';
 
 interface OrderInventoryModalProps {
   isOpen: boolean;
@@ -41,6 +44,7 @@ interface OrderInventoryModalProps {
   onAddNewPress: (newPress: string) => void;
   onDeletePress?: (press: string) => void;
   targetJob?: CorrugationJob | null;
+  existingInventory?: InventoryItem[];
   // Die & Job options
   availableJobs?: CorrugationJob[];
   availableJobTypes?: string[];
@@ -65,6 +69,7 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
   onAddNewPress,
   onDeletePress,
   targetJob,
+  existingInventory = [],
   availableJobs = [],
   availableJobTypes = [],
   onAddNewJobType,
@@ -193,6 +198,12 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
   const [notes, setNotes] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
 
+  // Use Existing Stock option
+  const [isExistingStock, setIsExistingStock] = useState<boolean>(false);
+
+  // Press photo upload option
+  const [pressPhotoUrl, setPressPhotoUrl] = useState<string>('');
+
   // MULTIPLE STOCKS QUEUE FOR JOB
   const [stockQueue, setStockQueue] = useState<StockItemEntry[]>([]);
 
@@ -230,12 +241,62 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
 
   if (!isOpen) return null;
 
+  // Filter existing inventory for available in-house stock items
+  const availableExistingStock = useMemo(() => {
+    if (!existingInventory || existingInventory.length === 0) return [];
+    return existingInventory.filter(
+      (item) => item.category !== 'Die' && Boolean(item.stockType)
+    );
+  }, [existingInventory]);
+
+  const handleSelectExistingStockItem = (exist: InventoryItem) => {
+    setStockType(exist.stockType);
+    if (exist.jobSize) {
+      setJobSize(exist.jobSize);
+    }
+    const source = exist.receivingFrom
+      ? `Plant Warehouse (${exist.receivingFrom})`
+      : 'Plant Warehouse (In-House Stock)';
+    setReceivingFrom(source);
+    if (exist.quantity && exist.quantity > 0) {
+      setQuantity(exist.quantity);
+    }
+    setIsStockDropdownOpen(false);
+    setStockSearch('');
+    setErrorMessage('');
+  };
+
   // Handlers for Stock Type
   const handleSelectStockType = (type: string) => {
     setStockType(type);
     setIsStockDropdownOpen(false);
     setStockSearch('');
     setErrorMessage('');
+
+    if (isExistingStock) {
+      const match = availableExistingStock.find(
+        (it) => it.stockType.toLowerCase() === type.toLowerCase()
+      );
+      if (match) {
+        if (match.jobSize) setJobSize(match.jobSize);
+        setReceivingFrom(
+          match.receivingFrom
+            ? `Plant Warehouse (${match.receivingFrom})`
+            : 'Plant Warehouse (In-House Stock)'
+        );
+        if (match.quantity && match.quantity > 0) {
+          setQuantity(match.quantity);
+        }
+      } else {
+        setReceivingFrom('Plant Warehouse (In-House Stock)');
+        const activeJob = targetJob || (selectedJobId && selectedJobId !== 'custom' ? availableJobs.find((j) => j.id === selectedJobId) : undefined);
+        if (activeJob?.jobSize) {
+          setJobSize(activeJob.jobSize);
+        } else if (activeJob?.boardSize) {
+          setJobSize(activeJob.boardSize);
+        }
+      }
+    }
   };
 
   const handleSaveStockType = (typeToAdd?: string) => {
@@ -344,6 +405,7 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
     if (!validateCurrentItem()) return;
 
     const activeJob = targetJob || (selectedJobId && selectedJobId !== 'custom' ? availableJobs.find((j) => j.id === selectedJobId) : undefined);
+    const nowTime = formatReceivedTimestamp();
 
     const newEntry: StockItemEntry = {
       id: `entry-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
@@ -356,7 +418,11 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
       quantity: Number(quantity),
       notes: notes.trim() || undefined,
       orderedAt: `${orderDate} 12:00`,
-      status: 'Not Received',
+      status: isExistingStock ? 'Received' : 'Not Received',
+      receivedAt: isExistingStock ? nowTime : undefined,
+      isExistingStock,
+      photoUrl: undefined,
+      pressPhotoUrl: isPrinted && pressPhotoUrl ? pressPhotoUrl : undefined,
       isUrgent: activeJob ? Boolean(activeJob.isUrgent) : false,
       jobId: activeJob ? activeJob.id : undefined,
       jobName: activeJob ? activeJob.jobName : undefined,
@@ -367,6 +433,8 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
     // Reset fields for the next stock addition
     setStockType('');
     setNotes('');
+    setPressPhotoUrl('');
+    setIsExistingStock(false);
     setErrorMessage('');
   };
 
@@ -454,6 +522,7 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
     // If on Stock tab and has filled in current form fields, validate and include it
     if (activeCategory === 'Stock' && stockType.trim()) {
       if (!validateCurrentItem()) return;
+      const nowTime = formatReceivedTimestamp();
       allItemsToSubmit.push({
         id: `entry-${Date.now()}`,
         category: 'Stock',
@@ -465,7 +534,11 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
         quantity: Number(quantity),
         notes: notes.trim() || undefined,
         orderedAt: `${orderDate} 12:00`,
-        status: 'Not Received',
+        status: isExistingStock ? 'Received' : 'Not Received',
+        receivedAt: isExistingStock ? nowTime : undefined,
+        isExistingStock,
+        photoUrl: undefined,
+        pressPhotoUrl: isPrinted && pressPhotoUrl ? pressPhotoUrl : undefined,
         isUrgent: activeJob ? Boolean(activeJob.isUrgent) : false,
         jobId: activeJob ? activeJob.id : undefined,
         jobName: activeJob ? activeJob.jobName : undefined,
@@ -517,8 +590,11 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
       notes: item.notes,
       orderedAt: item.orderedAt || `${orderDate} 12:00`,
       status: item.status || 'Not Received',
+      receivedAt: item.receivedAt,
+      isExistingStock: Boolean(item.isExistingStock),
       isUrgent: item.isUrgent !== undefined ? item.isUrgent : (activeJob ? Boolean(activeJob.isUrgent) : false),
-      photoUrl: item.photoUrl || undefined,
+      photoUrl: item.category === 'Die' ? (item.photoUrl || undefined) : undefined,
+      pressPhotoUrl: item.pressPhotoUrl || undefined,
     }));
 
     onSaveInventoryOrders(payload as any);
@@ -527,7 +603,10 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
     setStockQueue([]);
     setStockType('');
     setNotes('');
+    setPressPhotoUrl('');
+    setIsExistingStock(false);
     setDieNotes('');
+    setDiePhotoUrl('');
     setErrorMessage('');
     onClose();
   };
@@ -651,6 +730,11 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
                         {item.isUrgent && (
                           <span className="px-1.5 py-0.2 rounded text-[10px] bg-rose-500/20 text-rose-300 border border-rose-500/30 font-bold">
                             URGENT
+                          </span>
+                        )}
+                        {item.isExistingStock && (
+                          <span className="px-1.5 py-0.2 rounded text-[10px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-semibold">
+                            Existing Stock
                           </span>
                         )}
                         <span className={`px-1.5 py-0.2 rounded text-[10px] ${
@@ -949,62 +1033,15 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
                 </div>
               </div>
 
-              {/* Optional Die Tool Photo Upload */}
-              <div className="p-3 rounded-xl bg-slate-950/70 border border-slate-800 space-y-2">
-                <div className="flex items-center justify-between">
-                  <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
-                    <Camera className="w-3.5 h-3.5 text-purple-400" />
-                    <span>Die Tool Photo / Proof (Optional)</span>
-                  </label>
-                  {diePhotoUrl && (
-                    <button
-                      type="button"
-                      onClick={() => setDiePhotoUrl('')}
-                      className="text-[11px] text-rose-400 hover:text-rose-300 transition-colors flex items-center gap-1 cursor-pointer"
-                    >
-                      <Trash2 className="w-3 h-3" />
-                      <span>Remove Photo</span>
-                    </button>
-                  )}
-                </div>
-
-                {diePhotoUrl ? (
-                  <div className="flex items-center gap-3 p-2 bg-slate-900 border border-purple-500/30 rounded-xl">
-                    <img
-                      src={diePhotoUrl}
-                      alt="Die Preview"
-                      className="w-16 h-16 object-cover rounded-lg border border-slate-700 shrink-0"
-                    />
-                    <div className="text-xs space-y-1">
-                      <span className="text-purple-300 font-semibold block">Photo Attached</span>
-                      <p className="text-[11px] text-slate-400">Ready to save with this die tool order</p>
-                      <label className="inline-block text-[11px] text-purple-400 hover:text-purple-300 underline cursor-pointer">
-                        Change photo
-                        <input
-                          type="file"
-                          accept="image/*"
-                          onChange={handleDiePhotoUpload}
-                          className="hidden"
-                        />
-                      </label>
-                    </div>
-                  </div>
-                ) : (
-                  <label className="flex flex-col items-center justify-center p-3 border-2 border-dashed border-slate-800 hover:border-purple-500/60 rounded-xl bg-slate-900/40 hover:bg-purple-950/20 cursor-pointer transition-colors group">
-                    <div className="flex items-center gap-2 text-slate-400 group-hover:text-purple-300 text-xs">
-                      <Camera className="w-4 h-4 text-slate-500 group-hover:text-purple-400" />
-                      <span className="font-medium">Upload Die Photo or Layout Drawing</span>
-                    </div>
-                    <span className="text-[10px] text-slate-500 mt-0.5">PNG, JPG, or WEBP (Optional)</span>
-                    <input
-                      type="file"
-                      accept="image/*"
-                      onChange={handleDiePhotoUpload}
-                      className="hidden"
-                    />
-                  </label>
-                )}
-              </div>
+              {/* Optional Die Tool Photo Upload with Drag and Drop */}
+              <PhotoDropzone
+                value={diePhotoUrl}
+                onChange={(url) => setDiePhotoUrl(url)}
+                onClear={() => setDiePhotoUrl('')}
+                label="Die Tool Photo / Proof (Optional)"
+                placeholder="Drag & drop die photo or layout drawing or click to browse"
+                accentColor="purple"
+              />
 
               {/* Add to Queue Button */}
               <div className="pt-2">
@@ -1033,6 +1070,138 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
                   {stockQueue.length > 0 ? '+ Configure Additional Stock Item' : 'Stock Details'}
                 </span>
               </div>
+
+              {/* Option: Use Existing Stock for Job */}
+              <div className={`p-3 rounded-xl border transition-all ${
+                isExistingStock 
+                  ? 'bg-emerald-950/40 border-emerald-500/60 shadow-sm shadow-emerald-500/10' 
+                  : 'bg-slate-950/70 border-slate-800 hover:border-slate-700'
+              }`}>
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 border ${
+                      isExistingStock
+                        ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40'
+                        : 'bg-slate-900 text-slate-400 border-slate-800'
+                    }`}>
+                      <Layers className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <div className="text-xs font-bold text-white flex items-center gap-1.5">
+                        <span>Use Existing Stock for Job</span>
+                        {isExistingStock && (
+                          <span className="px-1.5 py-0.2 rounded text-[10px] font-mono bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                            In-House / Received
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-slate-400">
+                        {isExistingStock 
+                          ? 'Item will be fulfilled from plant in-house stock and immediately marked as Received with current timestamp.' 
+                          : 'Check this option if using existing warehouse inventory rather than ordering new supplier stock.'}
+                      </p>
+                    </div>
+                  </div>
+
+                  <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                    <input
+                      type="checkbox"
+                      checked={isExistingStock}
+                      onChange={(e) => {
+                        const checked = e.target.checked;
+                        setIsExistingStock(checked);
+                        if (checked) {
+                          if (availableExistingStock.length > 0) {
+                            const match = stockType
+                              ? availableExistingStock.find((it) => it.stockType.toLowerCase() === stockType.toLowerCase())
+                              : availableExistingStock[0];
+                            const chosen = match || availableExistingStock[0];
+                            handleSelectExistingStockItem(chosen);
+                          } else {
+                            setReceivingFrom('Plant Warehouse (In-House Stock)');
+                            const activeJob = targetJob || (selectedJobId && selectedJobId !== 'custom' ? availableJobs.find((j) => j.id === selectedJobId) : undefined);
+                            if (activeJob?.jobSize) setJobSize(activeJob.jobSize);
+                            else if (activeJob?.boardSize) setJobSize(activeJob.boardSize);
+                          }
+                        }
+                      }}
+                      className="sr-only peer"
+                    />
+                    <div className="w-9 h-5 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-600"></div>
+                  </label>
+                </div>
+              </div>
+
+              {/* AVAILABLE IN-HOUSE STOCK LOT SELECTOR */}
+              {isExistingStock && (
+                <div className="p-3.5 rounded-xl bg-emerald-950/30 border border-emerald-500/40 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-emerald-300 flex items-center gap-1.5">
+                      <PackageCheck className="w-4 h-4 text-emerald-400" />
+                      <span>Select Available In-House Stock Lot</span>
+                    </span>
+                    {availableExistingStock.length > 0 && (
+                      <span className="text-[10px] font-mono text-emerald-300 bg-emerald-950 px-2 py-0.5 rounded border border-emerald-700/60 font-semibold">
+                        {availableExistingStock.length} lot(s) in plant
+                      </span>
+                    )}
+                  </div>
+
+                  {availableExistingStock.length > 0 ? (
+                    <div className="space-y-1.5 pt-1">
+                      <p className="text-[11px] text-slate-300">
+                        Select an available stock type below. The <strong>Board Size</strong> and <strong>Receiving From</strong> will appear automatically:
+                      </p>
+                      <div className="max-h-48 overflow-y-auto space-y-1.5 pr-1">
+                        {availableExistingStock.map((exist) => {
+                          const isSelected = stockType === exist.stockType && jobSize === (exist.jobSize || '');
+                          return (
+                            <div
+                              key={exist.id}
+                              onClick={() => handleSelectExistingStockItem(exist)}
+                              className={`p-2.5 rounded-xl border text-xs cursor-pointer transition-all flex items-center justify-between gap-2.5 ${
+                                isSelected
+                                  ? 'bg-emerald-500/25 border-emerald-400 text-white shadow-md shadow-emerald-500/10 ring-1 ring-emerald-500/50'
+                                  : 'bg-slate-900/90 border-slate-700 hover:border-emerald-500/50 text-slate-200 hover:bg-slate-850'
+                              }`}
+                            >
+                              <div className="min-w-0 flex-1">
+                                <div className="font-bold flex items-center gap-1.5 truncate text-white">
+                                  <span className="truncate">{exist.stockType}</span>
+                                  {isSelected && <Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" />}
+                                </div>
+                                <div className="flex flex-wrap items-center gap-2 text-[10px] font-mono text-slate-400 mt-1">
+                                  <span className="text-amber-300 font-semibold">Board Size: {exist.jobSize || 'Standard'}</span>
+                                  <span>•</span>
+                                  <span className="text-sky-300">From: {exist.receivingFrom || 'Plant Warehouse'}</span>
+                                  <span>•</span>
+                                  <span className="text-emerald-400 font-bold">In Stock: {Number(exist.quantity || 0).toLocaleString()} units</span>
+                                </div>
+                              </div>
+                              <span
+                                className={`px-2.5 py-1 rounded-lg text-[10px] font-bold shrink-0 transition-colors ${
+                                  isSelected
+                                    ? 'bg-emerald-500 text-slate-950 shadow-xs'
+                                    : 'bg-slate-800 text-emerald-300 border border-emerald-800 hover:bg-emerald-950'
+                                }`}
+                              >
+                                {isSelected ? '✓ Selected' : 'Select Lot'}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="p-3 rounded-lg bg-slate-900/60 border border-slate-800 text-xs text-slate-400 space-y-1">
+                      <p className="text-slate-200 font-medium">No recorded warehouse lots currently in database.</p>
+                      <p className="text-[11px] text-slate-500">
+                        Choose any stock type below, and <strong>Board Size</strong> and <strong>Receiving From</strong> will automatically appear as in-house stock.
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* 1. STOCK TYPE (Search, Select, and Type/Save) */}
           <div className="relative">
@@ -1169,9 +1338,17 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
 
           {/* 2. BOARD SIZE */}
           <div>
-            <label className="block text-xs font-semibold text-slate-200 mb-1.5">
-              Board Size <span className="text-amber-400">*</span>
-            </label>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="block text-xs font-semibold text-slate-200">
+                Board Size <span className="text-amber-400">*</span>
+              </label>
+              {isExistingStock && (
+                <span className="text-[10px] text-emerald-400 font-mono flex items-center gap-1 font-semibold bg-emerald-950/70 px-2 py-0.5 rounded border border-emerald-800/60">
+                  <Sparkles className="w-3 h-3 text-emerald-400" />
+                  <span>Auto-filled from Existing Stock</span>
+                </span>
+              )}
+            </div>
             <div className="relative">
               <Maximize2 className="w-4 h-4 text-slate-500 absolute left-3 top-2.5" />
               <input
@@ -1180,7 +1357,9 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
                 value={jobSize}
                 onChange={(e) => setJobSize(e.target.value)}
                 placeholder="e.g. 1200 x 850 mm or Deckle 1600mm x Cut 950mm"
-                className="w-full pl-9 pr-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500 font-mono"
+                className={`w-full pl-9 pr-3 py-2 bg-slate-950 border rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500 font-mono ${
+                  isExistingStock ? 'border-emerald-500/50 text-emerald-200' : 'border-slate-800'
+                }`}
               />
             </div>
           </div>
@@ -1188,9 +1367,17 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
           {/* 3. RECEIVING FROM (Search & Save as requested) */}
           <div className="relative">
             <div className="flex items-center justify-between mb-1.5">
-              <label className="block text-xs font-semibold text-slate-200">
-                Receiving From <span className="text-amber-400">*</span>
-              </label>
+              <div className="flex items-center gap-2">
+                <label className="block text-xs font-semibold text-slate-200">
+                  Receiving From <span className="text-amber-400">*</span>
+                </label>
+                {isExistingStock && (
+                  <span className="text-[10px] text-emerald-400 font-mono flex items-center gap-1 font-semibold bg-emerald-950/70 px-2 py-0.5 rounded border border-emerald-800/60">
+                    <Sparkles className="w-3 h-3 text-emerald-400" />
+                    <span>Auto-filled</span>
+                  </span>
+                )}
+              </div>
               <button
                 type="button"
                 onClick={() => {
@@ -1498,6 +1685,18 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
                     </div>
                   </div>
                 )}
+
+                {/* Press Run Proof / Plate Photo Upload with Drag and Drop */}
+                <div className="pt-2">
+                  <PhotoDropzone
+                    value={pressPhotoUrl}
+                    onChange={(url) => setPressPhotoUrl(url)}
+                    onClear={() => setPressPhotoUrl('')}
+                    label="Press Proof / Artwork Photo (Optional)"
+                    placeholder="Drag & drop press proof or artwork photo or click to browse"
+                    accentColor="amber"
+                  />
+                </div>
               </div>
             )}
           </div>

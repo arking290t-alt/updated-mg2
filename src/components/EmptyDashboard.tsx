@@ -39,7 +39,8 @@ import {
   COMMON_SUPPLIERS,
   INITIAL_PRESS_NAMES,
   INITIAL_DIE_MAKERS,
-  INITIAL_PUNCH_TYPES
+  INITIAL_PUNCH_TYPES,
+  formatReceivedTimestamp
 } from '../types/job';
 import {
   subscribeToJobs,
@@ -315,6 +316,7 @@ export const EmptyDashboard: React.FC<EmptyDashboardProps> = ({ onLogout }) => {
     const newItems: InventoryItem[] = orderList.map((order, idx) => ({
       id: `inv-${Date.now()}-${idx}`,
       ...order,
+      photoUrl: order.category === 'Die' ? order.photoUrl : undefined,
       orderedAt: order.orderedAt || timestamp,
       status: order.status || 'Not Received',
       isUrgent: Boolean(order.isUrgent),
@@ -325,11 +327,12 @@ export const EmptyDashboard: React.FC<EmptyDashboardProps> = ({ onLogout }) => {
 
     const targetJobId = orderList[0]?.jobId;
     if (targetJobId) {
-      // Determine printing specification from ordered stock (excluding Die items)
       const stockItems = orderList.filter((o) => o.category !== 'Die');
       const hasStock = stockItems.length > 0;
       const hasPrintedStock = stockItems.some((o) => o.isPrinted);
       const assignedPress = stockItems.find((o) => o.isPrinted && o.pressName)?.pressName;
+      const assignedPressPhoto = stockItems.find((o) => o.pressPhotoUrl || (o.isPrinted && o.photoUrl));
+      const pressPhotoUrl = assignedPressPhoto?.pressPhotoUrl || (assignedPressPhoto?.isPrinted ? assignedPressPhoto?.photoUrl : undefined);
 
       setJobs((prevJobs) =>
         prevJobs.map((j) => {
@@ -342,6 +345,7 @@ export const EmptyDashboard: React.FC<EmptyDashboardProps> = ({ onLogout }) => {
                 ? {
                     isPrinted: hasPrintedStock,
                     pressName: hasPrintedStock ? (assignedPress || j.pressName) : undefined,
+                    pressPhotoUrl: pressPhotoUrl || j.pressPhotoUrl,
                   }
                 : {}),
             };
@@ -356,15 +360,19 @@ export const EmptyDashboard: React.FC<EmptyDashboardProps> = ({ onLogout }) => {
     try {
       await addInventoryItemsToFirestore(newItems, targetJobId);
 
-      // If stock items were ordered, explicitly update the job's isPrinted and pressName in Firestore
+      // If stock items were ordered, explicitly update the job's isPrinted, pressName, and pressPhotoUrl in Firestore
       if (targetJobId) {
         const stockItems = orderList.filter((o) => o.category !== 'Die');
         if (stockItems.length > 0) {
           const hasPrintedStock = stockItems.some((o) => o.isPrinted);
           const assignedPress = stockItems.find((o) => o.isPrinted && o.pressName)?.pressName;
+          const assignedPressPhoto = stockItems.find((o) => o.pressPhotoUrl || (o.isPrinted && o.photoUrl));
+          const pressPhotoUrl = assignedPressPhoto?.pressPhotoUrl || (assignedPressPhoto?.isPrinted ? assignedPressPhoto?.photoUrl : undefined);
+
           await updateJobDetailsInFirestore(targetJobId, {
             isPrinted: hasPrintedStock,
             pressName: hasPrintedStock ? (assignedPress || '') : '',
+            ...(pressPhotoUrl ? { pressPhotoUrl } : {}),
           });
         }
       }
@@ -378,13 +386,14 @@ export const EmptyDashboard: React.FC<EmptyDashboardProps> = ({ onLogout }) => {
 
   // Handler: Update Job Status (Pending, Not Completed, Completed) with Firestore sync
   const handleSetJobStatus = async (jobId: string, status: JobStatus) => {
+    const completedAt = status === 'Completed' ? formatReceivedTimestamp() : undefined;
     // Optimistic local update
     setJobs((prev) =>
-      prev.map((j) => (j.id === jobId ? { ...j, status } : j))
+      prev.map((j) => (j.id === jobId ? { ...j, status, ...(status === 'Completed' ? { completedAt } : { completedAt: undefined }) } : j))
     );
 
     try {
-      await updateJobStatusInFirestore(jobId, status);
+      await updateJobStatusInFirestore(jobId, status, completedAt);
       setSyncStatus(`Job marked ${status} in Firebase`);
       setTimeout(() => setSyncStatus('Live Connected (mg-manager-3ab66)'), 3000);
     } catch (err: any) {
@@ -1186,6 +1195,7 @@ export const EmptyDashboard: React.FC<EmptyDashboardProps> = ({ onLogout }) => {
         onAddNewPress={handleAddNewPress}
         onDeletePress={handleDeletePress}
         targetJob={targetJobForInventory}
+        existingInventory={inventory}
         availableJobs={jobs}
         availableJobTypes={jobTypes}
         onAddNewJobType={handleAddNewJobType}

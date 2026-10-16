@@ -313,6 +313,8 @@ export function subscribeToJobs(
           isPrinted: data.isPrinted !== undefined ? Boolean(data.isPrinted) : undefined,
           pressPhotoUrl: data.pressPhotoUrl || undefined,
           processes: Array.isArray(data.processes) ? data.processes : undefined,
+          completedAt: data.completedAt || undefined,
+          pressCompletedAt: data.pressCompletedAt || undefined,
         });
       });
 
@@ -392,18 +394,22 @@ export async function addJobToFirestore(job: CorrugationJob): Promise<void> {
   }
 }
 
-export async function updateJobStatusInFirestore(jobId: string, status: JobStatus): Promise<void> {
+export async function updateJobStatusInFirestore(jobId: string, status: JobStatus, completedAt?: string): Promise<void> {
   // 1. Immediately update in local persistent storage
   const currentJobs = getPersistedJobs();
-  const updatedJobs = currentJobs.map((j) => (j.id === jobId ? { ...j, status } : j));
+  const updatedJobs = currentJobs.map((j) => (j.id === jobId ? { ...j, status, ...(status === 'Completed' && completedAt ? { completedAt } : {}) } : j));
   savePersistedJobs(updatedJobs);
 
   // 2. Sync to Firestore
   try {
-    await setDoc(doc(db, JOBS_COLLECTION, jobId), {
+    const payload: any = {
       status,
       updatedAt: new Date().toISOString(),
-    }, { merge: true });
+    };
+    if (status === 'Completed' && completedAt) {
+      payload.completedAt = completedAt;
+    }
+    await setDoc(doc(db, JOBS_COLLECTION, jobId), payload, { merge: true });
   } catch (err) {
     console.warn(`Firestore setDoc for job ${jobId} failed, but status is saved locally:`, err);
   }
@@ -527,6 +533,14 @@ export function subscribeToInventory(
           dieMaker: data.dieMaker || undefined,
           punchType: data.punchType || undefined,
           photoUrl: data.photoUrl || undefined,
+          pressPhotoUrl: data.pressPhotoUrl || undefined,
+          receivedAt: data.receivedAt || undefined,
+          isExistingStock: Boolean(data.isExistingStock),
+          isUsed: Boolean(data.isUsed),
+          usedAt: data.usedAt || undefined,
+          usedJobId: data.usedJobId || undefined,
+          usedJobName: data.usedJobName || undefined,
+          usedJobDescription: data.usedJobDescription || undefined,
         });
       });
 

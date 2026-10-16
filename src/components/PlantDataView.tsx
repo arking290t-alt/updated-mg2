@@ -42,8 +42,10 @@ import {
   INITIAL_STOCK_TYPES, 
   COMMON_SUPPLIERS,
   INITIAL_DIE_MAKERS,
-  INITIAL_PUNCH_TYPES
+  INITIAL_PUNCH_TYPES,
+  formatReceivedTimestamp
 } from '../types/job';
+import { PhotoDropzone } from './PhotoDropzone';
 
 interface PlantDataViewProps {
   jobs: CorrugationJob[];
@@ -453,7 +455,8 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
   // -----------------------------------------------------------------
   const handleToggleStockReceived = async (item: InventoryItem) => {
     const nextStatus = item.status === 'Received' ? 'Not Received' : 'Received';
-    await onUpdateInventoryDetails(item.id, { status: nextStatus });
+    const receivedAt = nextStatus === 'Received' ? formatReceivedTimestamp() : undefined;
+    await onUpdateInventoryDetails(item.id, { status: nextStatus, receivedAt });
   };
 
   const handleToggleStockUrgent = async (item: InventoryItem) => {
@@ -462,7 +465,8 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
 
   const handleToggleDieReceived = async (item: InventoryItem) => {
     const nextStatus = item.status === 'Received' ? 'Not Received' : 'Received';
-    await onUpdateInventoryDetails(item.id, { status: nextStatus });
+    const receivedAt = nextStatus === 'Received' ? formatReceivedTimestamp() : undefined;
+    await onUpdateInventoryDetails(item.id, { status: nextStatus, receivedAt });
   };
 
   const handleToggleDieUrgent = async (item: InventoryItem) => {
@@ -472,7 +476,8 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
   const handleTogglePressStatus = async (job: CorrugationJob) => {
     // Only toggles press stage completion, NEVER auto-completes the parent job!
     const nextStatus: 'Pending' | 'Completed' = job.pressStatus === 'Completed' ? 'Pending' : 'Completed';
-    await onUpdateJobDetails(job.id, { pressStatus: nextStatus });
+    const pressCompletedAt = nextStatus === 'Completed' ? formatReceivedTimestamp() : undefined;
+    await onUpdateJobDetails(job.id, { pressStatus: nextStatus, pressCompletedAt });
   };
 
   const handleTogglePressUrgent = async (job: CorrugationJob) => {
@@ -1057,12 +1062,12 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
       const fileDownloadName = activeTab === 'stock' ? `Stock_Chart_${today}.png` : activeTab === 'die' ? `Die_Chart_${today}.png` : `Press_Chart_${today}.png`;
       const accentColor = activeTab === 'stock' ? '#2563eb' : activeTab === 'die' ? '#7c3aed' : '#d97706';
 
-      // Canvas dimensions
+      // Canvas dimensions without top stats cards (starts directly with title and clean data table)
       const width = 1200;
       const rowHeight = 44;
-      const headerHeight = 170;
+      const headerHeight = 110;
       const totalRows = Math.min(itemsToRender.length, 35);
-      const height = Math.max(520, headerHeight + totalRows * rowHeight + 80);
+      const height = Math.max(340, headerHeight + totalRows * rowHeight + 65);
 
       // Retina 2x scale
       const scale = 2;
@@ -1090,7 +1095,7 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
 
       ctx.fillStyle = '#64748b';
       ctx.font = '12px system-ui, -apple-system, sans-serif';
-      ctx.fillText(`Generated: ${today}  ·  Corrugation & Converting Plant Operations`, 36, 74);
+      ctx.fillText(`Generated: ${today}  ·  Corrugation & Converting Plant Operations Registry`, 36, 76);
 
       // Helper for drawing a rounded rectangle
       const drawRoundRect = (x: number, y: number, w: number, h: number, radius: number, fill: string, stroke: string) => {
@@ -1112,122 +1117,7 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
         ctx.stroke();
       };
 
-      // 5. Four Clean All-White Decent KPI Cards
-      const cardY = 92;
-      const cardW = 265;
-      const cardH = 50;
-
-      if (activeTab === 'stock') {
-        // Total Lots
-        drawRoundRect(36, cardY, cardW, cardH, 8, '#f8fafc', '#e2e8f0');
-        ctx.fillStyle = '#64748b';
-        ctx.font = '11px system-ui';
-        ctx.fillText('TOTAL STOCK LOTS', 48, cardY + 20);
-        ctx.fillStyle = '#0f172a';
-        ctx.font = 'bold 18px monospace';
-        ctx.fillText(String(totalStockLots), 48, cardY + 42);
-
-        // Received
-        drawRoundRect(315, cardY, cardW, cardH, 8, '#f0fdf4', '#bbf7d0');
-        ctx.fillStyle = '#15803d';
-        ctx.font = '11px system-ui';
-        ctx.fillText('RECEIVED AT PLANT', 327, cardY + 20);
-        ctx.fillStyle = '#166534';
-        ctx.font = 'bold 18px monospace';
-        ctx.fillText(String(receivedStockLots), 327, cardY + 42);
-
-        // Pending
-        drawRoundRect(594, cardY, cardW, cardH, 8, '#fff7ed', '#fed7aa');
-        ctx.fillStyle = '#c2410c';
-        ctx.font = '11px system-ui';
-        ctx.fillText('PENDING / NOT RECEIVED', 606, cardY + 20);
-        ctx.fillStyle = '#9a3412';
-        ctx.font = 'bold 18px monospace';
-        ctx.fillText(String(pendingStockLots), 606, cardY + 42);
-
-        // Urgent
-        drawRoundRect(873, cardY, cardW, cardH, 8, '#fef2f2', '#fecaca');
-        ctx.fillStyle = '#b91c1c';
-        ctx.font = '11px system-ui';
-        ctx.fillText('URGENT PRIORITY LOTS', 885, cardY + 20);
-        ctx.fillStyle = '#dc2626';
-        ctx.font = 'bold 18px monospace';
-        ctx.fillText(String(urgentStockLots), 885, cardY + 42);
-      } else if (activeTab === 'die') {
-        // Total Dies
-        drawRoundRect(36, cardY, cardW, cardH, 8, '#f8fafc', '#e2e8f0');
-        ctx.fillStyle = '#64748b';
-        ctx.font = '11px system-ui';
-        ctx.fillText('TOTAL DIE TOOLS', 48, cardY + 20);
-        ctx.fillStyle = '#0f172a';
-        ctx.font = 'bold 18px monospace';
-        ctx.fillText(String(totalDieLots), 48, cardY + 42);
-
-        // Received
-        drawRoundRect(315, cardY, cardW, cardH, 8, '#f0fdf4', '#bbf7d0');
-        ctx.fillStyle = '#15803d';
-        ctx.font = '11px system-ui';
-        ctx.fillText('RECEIVED DIES', 327, cardY + 20);
-        ctx.fillStyle = '#166534';
-        ctx.font = 'bold 18px monospace';
-        ctx.fillText(String(receivedDieLots), 327, cardY + 42);
-
-        // Pending
-        drawRoundRect(594, cardY, cardW, cardH, 8, '#fff7ed', '#fed7aa');
-        ctx.fillStyle = '#c2410c';
-        ctx.font = '11px system-ui';
-        ctx.fillText('PENDING / ORDERED', 606, cardY + 20);
-        ctx.fillStyle = '#9a3412';
-        ctx.font = 'bold 18px monospace';
-        ctx.fillText(String(pendingDieLots), 606, cardY + 42);
-
-        // Urgent
-        drawRoundRect(873, cardY, cardW, cardH, 8, '#fef2f2', '#fecaca');
-        ctx.fillStyle = '#b91c1c';
-        ctx.font = '11px system-ui';
-        ctx.fillText('URGENT DIES', 885, cardY + 20);
-        ctx.fillStyle = '#dc2626';
-        ctx.font = 'bold 18px monospace';
-        ctx.fillText(String(urgentDieLots), 885, cardY + 42);
-      } else {
-        // Total Press Runs
-        drawRoundRect(36, cardY, cardW, cardH, 8, '#f8fafc', '#e2e8f0');
-        ctx.fillStyle = '#64748b';
-        ctx.font = '11px system-ui';
-        ctx.fillText('TOTAL PRESS RUNS', 48, cardY + 20);
-        ctx.fillStyle = '#0f172a';
-        ctx.font = 'bold 18px monospace';
-        ctx.fillText(String(totalPressJobs), 48, cardY + 42);
-
-        // Completed Press
-        drawRoundRect(315, cardY, cardW, cardH, 8, '#f0fdf4', '#bbf7d0');
-        ctx.fillStyle = '#15803d';
-        ctx.font = '11px system-ui';
-        ctx.fillText('COMPLETED RUNS', 327, cardY + 20);
-        ctx.fillStyle = '#166534';
-        ctx.font = 'bold 18px monospace';
-        ctx.fillText(String(completedPressJobs), 327, cardY + 42);
-
-        // Pending Press
-        drawRoundRect(594, cardY, cardW, cardH, 8, '#fff7ed', '#fed7aa');
-        ctx.fillStyle = '#c2410c';
-        ctx.font = '11px system-ui';
-        ctx.fillText('PENDING RUNS', 606, cardY + 20);
-        ctx.fillStyle = '#9a3412';
-        ctx.font = 'bold 18px monospace';
-        ctx.fillText(String(pendingPressJobs), 606, cardY + 42);
-
-        // Urgent Press
-        drawRoundRect(873, cardY, cardW, cardH, 8, '#fef2f2', '#fecaca');
-        ctx.fillStyle = '#b91c1c';
-        ctx.font = '11px system-ui';
-        ctx.fillText('URGENT JOBS', 885, cardY + 20);
-        ctx.fillStyle = '#dc2626';
-        ctx.font = 'bold 18px monospace';
-        ctx.fillText(String(urgentPressJobs), 885, cardY + 42);
-      }
-
-      // 6. Decent Light Table Header
+      // 5. Decent Light Table Header (Clean table without top stats cards)
       let y = headerHeight;
       ctx.fillStyle = '#f1f5f9';
       ctx.fillRect(36, y - 18, width - 72, 32);
@@ -1934,6 +1824,17 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
                                 </>
                               )}
                             </button>
+                            {isReceived && item.receivedAt && (
+                              <div className="text-[10px] text-emerald-400 font-mono mt-1 flex items-center gap-1">
+                                <Clock className="w-3 h-3 shrink-0" />
+                                <span>{item.receivedAt}</span>
+                              </div>
+                            )}
+                            {item.isExistingStock && (
+                              <div className="text-[10px] text-emerald-300 font-mono mt-0.5 font-semibold">
+                                📦 Existing Stock
+                              </div>
+                            )}
                           </td>
 
                           {/* 8. Actions (Detail & 3-Dot Menu) */}
@@ -2380,6 +2281,12 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
                                 </>
                               )}
                             </button>
+                            {isReceived && item.receivedAt && (
+                              <div className="text-[10px] text-emerald-400 font-mono mt-1 flex items-center gap-1">
+                                <Clock className="w-3 h-3 shrink-0" />
+                                <span>{item.receivedAt}</span>
+                              </div>
+                            )}
                           </td>
 
                           {/* 9. Notes */}
@@ -2843,6 +2750,12 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
                                 </>
                               )}
                             </button>
+                            {isCompleted && job.pressCompletedAt && (
+                              <div className="text-[10px] text-emerald-400 font-mono mt-1 flex items-center gap-1">
+                                <Clock className="w-3 h-3 shrink-0" />
+                                <span>{job.pressCompletedAt}</span>
+                              </div>
+                            )}
                           </td>
 
                           {/* 8. Actions (Fill / Edit details, Delete) */}
@@ -3746,57 +3659,14 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
 
                   {/* Optional Die Tool Photo Upload */}
                   <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-2">
-                    <div className="flex items-center justify-between">
-                      <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
-                        <Camera className="w-3.5 h-3.5 text-purple-400" />
-                        <span>Die Tool Photo / Proof (Optional)</span>
-                      </label>
-                      {dieAddPhotoUrl && (
-                        <button
-                          type="button"
-                          onClick={() => setDieAddPhotoUrl('')}
-                          className="text-[11px] text-rose-400 hover:text-rose-300 flex items-center gap-1 cursor-pointer"
-                        >
-                          <Trash2 className="w-3 h-3" />
-                          <span>Remove</span>
-                        </button>
-                      )}
-                    </div>
-                    {dieAddPhotoUrl ? (
-                      <div className="flex items-center gap-3 p-2 bg-slate-900 border border-purple-500/30 rounded-xl">
-                        <img
-                          src={dieAddPhotoUrl}
-                          alt="Die Preview"
-                          className="w-14 h-14 object-cover rounded-lg border border-slate-700"
-                        />
-                        <div className="text-xs space-y-0.5">
-                          <span className="text-purple-300 font-semibold block">Photo Attached</span>
-                          <label className="text-[11px] text-purple-400 hover:text-purple-300 underline cursor-pointer">
-                            Change photo
-                            <input
-                              type="file"
-                              accept="image/*"
-                              onChange={handleDieAddPhotoUpload}
-                              className="hidden"
-                            />
-                          </label>
-                        </div>
-                      </div>
-                    ) : (
-                      <label className="flex flex-col items-center justify-center p-3 border-2 border-dashed border-slate-800 hover:border-purple-500/60 rounded-xl bg-slate-900/40 hover:bg-purple-950/20 cursor-pointer transition-colors group">
-                        <div className="flex items-center gap-2 text-slate-400 group-hover:text-purple-300 text-xs">
-                          <Camera className="w-4 h-4 text-slate-500 group-hover:text-purple-400" />
-                          <span className="font-medium">Upload Die Tool Photo</span>
-                        </div>
-                        <span className="text-[10px] text-slate-500 mt-0.5">PNG, JPG, or WEBP (Optional)</span>
-                        <input
-                          type="file"
-                          accept="image/*"
-                          onChange={handleDieAddPhotoUpload}
-                          className="hidden"
-                        />
-                      </label>
-                    )}
+                    <PhotoDropzone
+                      value={dieAddPhotoUrl}
+                      onChange={(url) => setDieAddPhotoUrl(url)}
+                      onClear={() => setDieAddPhotoUrl('')}
+                      label="Die Tool Photo / Proof (Optional)"
+                      placeholder="Drag & drop die photo or click to browse"
+                      accentColor="purple"
+                    />
                   </div>
                 </>
               ) : (
@@ -4006,59 +3876,15 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
               </div>
 
               {/* Optional Photo for Stock or Die Tool */}
-              <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-2">
-                <div className="flex items-center justify-between">
-                  <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
-                    <Camera className="w-3.5 h-3.5 text-purple-400" />
-                    <span>Tool / Material Photo (Optional)</span>
-                  </label>
-                  {stockForm.photoUrl && (
-                    <button
-                      type="button"
-                      onClick={() => setStockForm((prev) => ({ ...prev, photoUrl: '' }))}
-                      className="text-[11px] text-rose-400 hover:text-rose-300 flex items-center gap-1 cursor-pointer"
-                    >
-                      <Trash2 className="w-3 h-3" />
-                      <span>Remove</span>
-                    </button>
-                  )}
-                </div>
-                {stockForm.photoUrl ? (
-                  <div className="flex items-center gap-3 p-2 bg-slate-900 border border-purple-500/30 rounded-xl">
-                    <img
-                      src={stockForm.photoUrl}
-                      alt="Preview"
-                      className="w-14 h-14 object-cover rounded-lg border border-slate-700"
-                    />
-                    <div className="text-xs space-y-0.5">
-                      <span className="text-purple-300 font-semibold block">Photo Uploaded</span>
-                      <label className="text-[11px] text-purple-400 hover:text-purple-300 underline cursor-pointer">
-                        Change photo
-                        <input
-                          type="file"
-                          accept="image/*"
-                          onChange={handleEditStockPhotoUpload}
-                          className="hidden"
-                        />
-                      </label>
-                    </div>
-                  </div>
-                ) : (
-                  <label className="flex flex-col items-center justify-center p-3 border-2 border-dashed border-slate-800 hover:border-purple-500/60 rounded-xl bg-slate-900/40 hover:bg-purple-950/20 cursor-pointer transition-colors group">
-                    <div className="flex items-center gap-2 text-slate-400 group-hover:text-purple-300 text-xs">
-                      <Camera className="w-4 h-4 text-slate-500 group-hover:text-purple-400" />
-                      <span className="font-medium">Upload Photo / Layout Proof</span>
-                    </div>
-                    <span className="text-[10px] text-slate-500 mt-0.5">Optional image upload</span>
-                    <input
-                      type="file"
-                      accept="image/*"
-                      onChange={handleEditStockPhotoUpload}
-                      className="hidden"
-                    />
-                  </label>
-                )}
-              </div>
+              {/* Optional Photo for Stock or Die Tool with Drag & Drop */}
+              <PhotoDropzone
+                value={stockForm.photoUrl}
+                onChange={(url) => setStockForm((prev) => ({ ...prev, photoUrl: url }))}
+                onClear={() => setStockForm((prev) => ({ ...prev, photoUrl: '' }))}
+                label="Tool / Material Photo (Optional)"
+                placeholder="Drag & drop photo or click to browse"
+                accentColor="purple"
+              />
 
               <div className="flex items-center justify-end gap-2 pt-4 border-t border-slate-800">
                 <button
@@ -4221,60 +4047,15 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
                 </div>
               </div>
 
-              {/* Optional Press Photo Upload */}
-              <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-2">
-                <div className="flex items-center justify-between">
-                  <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
-                    <Camera className="w-3.5 h-3.5 text-amber-400" />
-                    <span>Press Run / Print Proof Photo (Optional)</span>
-                  </label>
-                  {pressForm.pressPhotoUrl && (
-                    <button
-                      type="button"
-                      onClick={() => setPressForm((prev) => ({ ...prev, pressPhotoUrl: '' }))}
-                      className="text-[11px] text-rose-400 hover:text-rose-300 flex items-center gap-1 cursor-pointer"
-                    >
-                      <Trash2 className="w-3 h-3" />
-                      <span>Remove</span>
-                    </button>
-                  )}
-                </div>
-                {pressForm.pressPhotoUrl ? (
-                  <div className="flex items-center gap-3 p-2 bg-slate-900 border border-amber-500/30 rounded-xl">
-                    <img
-                      src={pressForm.pressPhotoUrl}
-                      alt="Press Proof Preview"
-                      className="w-14 h-14 object-cover rounded-lg border border-slate-700"
-                    />
-                    <div className="text-xs space-y-0.5">
-                      <span className="text-amber-300 font-semibold block">Photo Attached</span>
-                      <label className="text-[11px] text-amber-400 hover:text-amber-300 underline cursor-pointer">
-                        Change photo
-                        <input
-                          type="file"
-                          accept="image/*"
-                          onChange={handlePressPhotoUpload}
-                          className="hidden"
-                        />
-                      </label>
-                    </div>
-                  </div>
-                ) : (
-                  <label className="flex flex-col items-center justify-center p-3 border-2 border-dashed border-slate-800 hover:border-amber-500/60 rounded-xl bg-slate-900/40 hover:bg-amber-950/20 cursor-pointer transition-colors group">
-                    <div className="flex items-center gap-2 text-slate-400 group-hover:text-amber-300 text-xs">
-                      <Camera className="w-4 h-4 text-slate-500 group-hover:text-amber-400" />
-                      <span className="font-medium">Upload Press Run Proof / Plate Photo</span>
-                    </div>
-                    <span className="text-[10px] text-slate-500 mt-0.5">PNG, JPG, or WEBP (Optional)</span>
-                    <input
-                      type="file"
-                      accept="image/*"
-                      onChange={handlePressPhotoUpload}
-                      className="hidden"
-                    />
-                  </label>
-                )}
-              </div>
+              {/* Optional Press Photo Upload with Drag & Drop */}
+              <PhotoDropzone
+                value={pressForm.pressPhotoUrl}
+                onChange={(url) => setPressForm((prev) => ({ ...prev, pressPhotoUrl: url }))}
+                onClear={() => setPressForm((prev) => ({ ...prev, pressPhotoUrl: '' }))}
+                label="Press Run / Print Proof Photo (Optional)"
+                placeholder="Drag & drop press proof photo or click to browse"
+                accentColor="amber"
+              />
 
               <div className="flex items-center justify-end gap-2 pt-4 border-t border-slate-800">
                 <button
@@ -4426,6 +4207,16 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
                 </div>
               </div>
 
+              {/* Optional Press Photo Upload with Drag & Drop */}
+              <PhotoDropzone
+                value={pressForm.pressPhotoUrl}
+                onChange={(url) => setPressForm((prev) => ({ ...prev, pressPhotoUrl: url }))}
+                onClear={() => setPressForm((prev) => ({ ...prev, pressPhotoUrl: '' }))}
+                label="Press Run / Print Proof Photo (Optional)"
+                placeholder="Drag & drop press proof photo or click to browse"
+                accentColor="amber"
+              />
+
               <div className="flex items-center justify-end gap-2 pt-4 border-t border-slate-800">
                 <button
                   type="button"
@@ -4576,6 +4367,23 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
                     <span className="text-slate-400 font-medium">Order Date:</span>
                     <span className="font-mono text-slate-300">{item.orderedAt || '—'}</span>
                   </div>
+                  {item.receivedAt && (
+                    <div className="flex items-center justify-between text-emerald-400">
+                      <span className="font-medium flex items-center gap-1">
+                        <Clock className="w-3.5 h-3.5" />
+                        <span>Received Time:</span>
+                      </span>
+                      <span className="font-mono font-bold text-xs">{item.receivedAt}</span>
+                    </div>
+                  )}
+                  {item.isExistingStock && (
+                    <div className="flex items-center justify-between">
+                      <span className="text-slate-400 font-medium">Fulfillment Type:</span>
+                      <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                        In-House Existing Stock
+                      </span>
+                    </div>
+                  )}
                   {item.notes && (
                     <div className="pt-2 border-t border-slate-850">
                       <span className="text-slate-400 block mb-0.5">Notes:</span>
@@ -4583,40 +4391,6 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
                     </div>
                   )}
                 </div>
-
-                {/* Optional Stock/Material Photo Card */}
-                {item.photoUrl && (
-                  <div className="p-3.5 rounded-xl bg-slate-950 border border-sky-500/30 space-y-2">
-                    <div className="flex items-center justify-between text-xs">
-                      <span className="font-bold text-sky-300 flex items-center gap-1.5">
-                        <Camera className="w-3.5 h-3.5 text-sky-400" />
-                        <span>Material / Board Photo</span>
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => setPreviewImage({ url: item.photoUrl!, title: `${item.stockType} Proof` })}
-                        className="text-[11px] text-sky-400 hover:text-sky-300 underline font-medium cursor-pointer"
-                      >
-                        View Full Size
-                      </button>
-                    </div>
-                    <div 
-                      onClick={() => setPreviewImage({ url: item.photoUrl!, title: `${item.stockType} Proof` })}
-                      className="cursor-pointer group relative overflow-hidden rounded-lg border border-slate-800"
-                    >
-                      <img
-                        src={item.photoUrl}
-                        alt="Material Proof"
-                        className="w-full h-40 object-cover group-hover:scale-105 transition-transform duration-200"
-                      />
-                      <div className="absolute inset-0 bg-slate-950/30 group-hover:bg-transparent transition-colors flex items-center justify-center">
-                        <span className="px-2.5 py-1 rounded-md bg-slate-950/80 text-[11px] text-sky-200 opacity-0 group-hover:opacity-100 transition-opacity font-semibold">
-                          Click to enlarge 🔍
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                )}
 
                 {/* Quick Action Buttons */}
                 <div className="space-y-2.5">
@@ -4628,8 +4402,10 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
                   <button
                     type="button"
                     onClick={async () => {
+                      const nextStatus = isReceived ? 'Not Received' : 'Received';
+                      const receivedAt = nextStatus === 'Received' ? formatReceivedTimestamp() : undefined;
                       await handleToggleStockReceived(item);
-                      setDetailStockItem({ ...item, status: isReceived ? 'Not Received' : 'Received' });
+                      setDetailStockItem({ ...item, status: nextStatus, receivedAt });
                     }}
                     className={`w-full p-3 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-between border shadow-sm ${
                       isReceived
@@ -4775,6 +4551,15 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
                     <span className="text-slate-400 font-medium">Order Date:</span>
                     <span className="font-mono text-slate-300">{item.orderedAt || '—'}</span>
                   </div>
+                  {item.receivedAt && (
+                    <div className="flex items-center justify-between text-emerald-400">
+                      <span className="font-medium flex items-center gap-1">
+                        <Clock className="w-3.5 h-3.5" />
+                        <span>Received Time:</span>
+                      </span>
+                      <span className="font-mono font-bold text-xs">{item.receivedAt}</span>
+                    </div>
+                  )}
                   {item.notes && (
                     <div className="pt-2 border-t border-slate-850">
                       <span className="text-slate-400 block mb-0.5">Notes:</span>
@@ -4827,8 +4612,10 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
                   <button
                     type="button"
                     onClick={async () => {
+                      const nextStatus = isReceived ? 'Not Received' : 'Received';
+                      const receivedAt = nextStatus === 'Received' ? formatReceivedTimestamp() : undefined;
                       await handleToggleDieReceived(item);
-                      setDetailDieItem({ ...item, status: isReceived ? 'Not Received' : 'Received' });
+                      setDetailDieItem({ ...item, status: nextStatus, receivedAt });
                     }}
                     className={`w-full p-3 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-between border shadow-sm ${
                       isReceived
@@ -4966,6 +4753,15 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
                     <span className="text-slate-400 font-medium">Job Created:</span>
                     <span className="font-mono text-slate-300">{job.createdAt || '—'}</span>
                   </div>
+                  {job.pressCompletedAt && (
+                    <div className="flex items-center justify-between text-emerald-400">
+                      <span className="font-medium flex items-center gap-1">
+                        <Clock className="w-3.5 h-3.5" />
+                        <span>Press Completed Time:</span>
+                      </span>
+                      <span className="font-mono font-bold text-xs">{job.pressCompletedAt}</span>
+                    </div>
+                  )}
                   {job.notes && (
                     <div className="pt-2 border-t border-slate-850">
                       <span className="text-slate-400 block mb-0.5">Notes:</span>
@@ -5018,8 +4814,10 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
                   <button
                     type="button"
                     onClick={async () => {
+                      const nextStatus = isCompleted ? 'Pending' : 'Completed';
+                      const pressCompletedAt = nextStatus === 'Completed' ? formatReceivedTimestamp() : undefined;
                       await handleTogglePressStatus(job);
-                      setDetailPressJob({ ...job, pressStatus: isCompleted ? 'Pending' : 'Completed' });
+                      setDetailPressJob({ ...job, pressStatus: nextStatus, pressCompletedAt });
                     }}
                     className={`w-full p-3 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-between border shadow-sm ${
                       isCompleted

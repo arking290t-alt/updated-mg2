@@ -21,6 +21,8 @@ export interface CorrugationJob {
   isPrinted?: boolean;
   pressPhotoUrl?: string; // Optional photo of press print / run setup
   processes?: JobProcessStep[]; // Sequence of manufacturing process steps
+  completedAt?: string; // Timestamp when job was marked completed
+  pressCompletedAt?: string; // Timestamp when press run was marked completed
 }
 
 export interface JobProcessStep {
@@ -44,14 +46,33 @@ export interface InventoryItem {
   jobName?: string;
   jobType?: string;
   orderedAt: string;
-  status: 'Received' | 'Not Received' | 'In Transit';
+  status: 'Received' | 'Not Received' | 'In Transit' | 'Used';
   isUrgent?: boolean;
   notes?: string;
   category?: 'Stock' | 'Die';
   dieMaker?: string;
   punchType?: string;
   photoUrl?: string; // Optional photo for die tooling or stock
+  pressPhotoUrl?: string; // Optional photo of press run / proof
+  receivedAt?: string; // Exact timestamp (date & time) when marked as Received
+  isExistingStock?: boolean; // Whether ordered from existing factory in-house stock
+  isUsed?: boolean; // Whether stock has been consumed/used
+  usedAt?: string; // Exact timestamp when stock was marked as used
+  usedJobId?: string; // Linked job ID
+  usedJobName?: string; // Job Name stock was consumed for
+  usedJobDescription?: string; // Job description / notes on stock consumption
 }
+
+export const formatReceivedTimestamp = (date: Date = new Date()): string => {
+  return date.toLocaleString('en-GB', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true,
+  });
+};
 
 export interface StockItemEntry {
   id: string;
@@ -69,9 +90,17 @@ export interface StockItemEntry {
   jobName?: string;
   jobType?: string;
   orderedAt?: string;
-  status?: 'Received' | 'Not Received' | 'In Transit';
+  status?: 'Received' | 'Not Received' | 'In Transit' | 'Used';
   isUrgent?: boolean;
   photoUrl?: string;
+  pressPhotoUrl?: string;
+  receivedAt?: string;
+  isExistingStock?: boolean;
+  isUsed?: boolean;
+  usedAt?: string;
+  usedJobId?: string;
+  usedJobName?: string;
+  usedJobDescription?: string;
 }
 
 export const INITIAL_JOB_TYPES: string[] = [];

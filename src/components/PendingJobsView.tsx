@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { 
   Clock, 
   Search, 
@@ -23,9 +23,34 @@ import {
   FileText,
   Workflow,
   Camera,
-  Check
+  Check,
+  Filter,
+  RotateCcw
 } from 'lucide-react';
-import { CorrugationJob, InventoryItem, JobPlacement, JobStatus, JobProcessStep } from '../types/job';
+import { CorrugationJob, InventoryItem, JobPlacement, JobStatus, JobProcessStep, formatReceivedTimestamp } from '../types/job';
+
+// Helper to extract comparable date and month strings (YYYY-MM-DD and YYYY-MM)
+const getJobDateParts = (createdAt: string | undefined): { dateStr: string; monthStr: string } => {
+  if (!createdAt) return { dateStr: '', monthStr: '' };
+  const isoMatch = createdAt.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (isoMatch) {
+    return {
+      dateStr: `${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}`,
+      monthStr: `${isoMatch[1]}-${isoMatch[2]}`,
+    };
+  }
+  const parsed = new Date(createdAt);
+  if (!isNaN(parsed.getTime())) {
+    const year = parsed.getFullYear();
+    const month = String(parsed.getMonth() + 1).padStart(2, '0');
+    const day = String(parsed.getDate()).padStart(2, '0');
+    return {
+      dateStr: `${year}-${month}-${day}`,
+      monthStr: `${year}-${month}`,
+    };
+  }
+  return { dateStr: '', monthStr: '' };
+};
 
 interface PendingJobsViewProps {
   jobs: CorrugationJob[];
@@ -56,6 +81,8 @@ export const PendingJobsView: React.FC<PendingJobsViewProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'All' | 'Pending' | 'Not Completed' | 'Completed'>('All');
   const [placementFilter, setPlacementFilter] = useState<'All' | JobPlacement>('All');
+  const [selectedMonth, setSelectedMonth] = useState<string>('');
+  const [selectedDate, setSelectedDate] = useState<string>('');
 
   // Confirmation state for marking completed / not completed
   const [confirmStatusModal, setConfirmStatusModal] = useState<StatusConfirmationState | null>(null);
@@ -90,17 +117,19 @@ export const PendingJobsView: React.FC<PendingJobsViewProps> = ({
 
     const allDone = updatedSteps.length > 0 && updatedSteps.every((p) => p.completed && Boolean(p.completedDate));
     const nextStatus: JobStatus = allDone ? 'Completed' : job.status;
+    const completedAt = allDone ? formatReceivedTimestamp() : job.completedAt;
 
     await onUpdateJobDetails(job.id, {
       processes: updatedSteps,
       status: nextStatus,
+      completedAt,
     });
 
     if (processModalJob?.id === job.id) {
-      setProcessModalJob({ ...processModalJob, processes: updatedSteps, status: nextStatus });
+      setProcessModalJob({ ...processModalJob, processes: updatedSteps, status: nextStatus, completedAt });
     }
     if (detailModalJob?.id === job.id) {
-      setDetailModalJob({ ...detailModalJob, processes: updatedSteps, status: nextStatus });
+      setDetailModalJob({ ...detailModalJob, processes: updatedSteps, status: nextStatus, completedAt });
     }
   };
 
@@ -115,17 +144,19 @@ export const PendingJobsView: React.FC<PendingJobsViewProps> = ({
     });
 
     const nextStatus: JobStatus = job.status === 'Completed' ? 'Pending' : job.status;
+    const completedAt = nextStatus === 'Pending' ? undefined : job.completedAt;
 
     await onUpdateJobDetails(job.id, {
       processes: updatedSteps,
       status: nextStatus,
+      completedAt,
     });
 
     if (processModalJob?.id === job.id) {
-      setProcessModalJob({ ...processModalJob, processes: updatedSteps, status: nextStatus });
+      setProcessModalJob({ ...processModalJob, processes: updatedSteps, status: nextStatus, completedAt });
     }
     if (detailModalJob?.id === job.id) {
-      setDetailModalJob({ ...detailModalJob, processes: updatedSteps, status: nextStatus });
+      setDetailModalJob({ ...detailModalJob, processes: updatedSteps, status: nextStatus, completedAt });
     }
   };
 
@@ -164,7 +195,44 @@ export const PendingJobsView: React.FC<PendingJobsViewProps> = ({
     }
   };
 
-  // Filter jobs based on search, status, and placement
+  // Unique months found in jobs for quick selector
+  const availableMonthsInJobs = useMemo(() => {
+    const map = new Map<string, number>();
+    jobs.forEach((job) => {
+      const { monthStr } = getJobDateParts(job.createdAt);
+      if (monthStr) {
+        map.set(monthStr, (map.get(monthStr) || 0) + 1);
+      }
+    });
+
+    const sortedMonths = Array.from(map.keys()).sort((a, b) => b.localeCompare(a));
+    return sortedMonths.map((m) => {
+      const [year, month] = m.split('-');
+      const dateObj = new Date(Number(year), Number(month) - 1, 1);
+      const label = dateObj.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+      return {
+        value: m,
+        label,
+        count: map.get(m) || 0,
+      };
+    });
+  }, [jobs]);
+
+  const formatDisplayMonth = (m: string) => {
+    if (!m) return '';
+    const [year, month] = m.split('-');
+    const dateObj = new Date(Number(year), Number(month) - 1, 1);
+    return dateObj.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+  };
+
+  const formatDisplayDate = (d: string) => {
+    if (!d) return '';
+    const [year, month, day] = d.split('-');
+    const dateObj = new Date(Number(year), Number(month) - 1, Number(day));
+    return dateObj.toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' });
+  };
+
+  // Filter jobs based on search, status, placement, month, and exact date
   const filteredJobs = jobs.filter((job) => {
     const matchesSearch =
       job.jobName.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -179,12 +247,37 @@ export const PendingJobsView: React.FC<PendingJobsViewProps> = ({
     const matchesPlacement =
       placementFilter === 'All' || job.jobPlacement === placementFilter;
 
-    return matchesSearch && matchesStatus && matchesPlacement;
+    const { dateStr, monthStr } = getJobDateParts(job.createdAt);
+
+    // Exact Date filter (if selectedDate is set, job must match that date)
+    const matchesDate = !selectedDate || dateStr === selectedDate;
+
+    // Month filter (if selectedMonth is set, job must match that month)
+    const matchesMonth = !selectedMonth || monthStr === selectedMonth;
+
+    return matchesSearch && matchesStatus && matchesPlacement && matchesDate && matchesMonth;
   });
 
-  const notCompletedCount = jobs.filter((j) => j.status === 'Not Completed').length;
-  const pendingCount = jobs.filter((j) => j.status === 'Pending').length;
-  const completedCount = jobs.filter((j) => j.status === 'Completed').length;
+  const notCompletedCount = jobs.filter((j) => {
+    const { dateStr, monthStr } = getJobDateParts(j.createdAt);
+    const matchesDate = !selectedDate || dateStr === selectedDate;
+    const matchesMonth = !selectedMonth || monthStr === selectedMonth;
+    return j.status === 'Not Completed' && matchesDate && matchesMonth;
+  }).length;
+
+  const pendingCount = jobs.filter((j) => {
+    const { dateStr, monthStr } = getJobDateParts(j.createdAt);
+    const matchesDate = !selectedDate || dateStr === selectedDate;
+    const matchesMonth = !selectedMonth || monthStr === selectedMonth;
+    return j.status === 'Pending' && matchesDate && matchesMonth;
+  }).length;
+
+  const completedCount = jobs.filter((j) => {
+    const { dateStr, monthStr } = getJobDateParts(j.createdAt);
+    const matchesDate = !selectedDate || dateStr === selectedDate;
+    const matchesMonth = !selectedMonth || monthStr === selectedMonth;
+    return j.status === 'Completed' && matchesDate && matchesMonth;
+  }).length;
 
   // Confirm and apply status change
   const handleConfirmStatusChange = () => {
@@ -204,8 +297,9 @@ export const PendingJobsView: React.FC<PendingJobsViewProps> = ({
   const handleToggleInventoryPopupStatus = async () => {
     if (!selectedInventoryItemPopup || !onUpdateInventoryDetails) return;
     const nextStatus = selectedInventoryItemPopup.status === 'Received' ? 'Not Received' : 'Received';
-    setSelectedInventoryItemPopup((prev) => (prev ? { ...prev, status: nextStatus } : null));
-    await onUpdateInventoryDetails(selectedInventoryItemPopup.id, { status: nextStatus });
+    const receivedAt = nextStatus === 'Received' ? formatReceivedTimestamp() : undefined;
+    setSelectedInventoryItemPopup((prev) => (prev ? { ...prev, status: nextStatus, receivedAt } : null));
+    await onUpdateInventoryDetails(selectedInventoryItemPopup.id, { status: nextStatus, receivedAt });
   };
 
   const handleToggleInventoryPopupUrgent = async () => {
@@ -332,6 +426,137 @@ export const PendingJobsView: React.FC<PendingJobsViewProps> = ({
 
       </div>
 
+      {/* Date & Month Filter Options Bar */}
+      <div className="p-3.5 rounded-2xl bg-slate-900 border border-slate-800 flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs">
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-1.5 text-slate-300 font-bold uppercase tracking-wider text-[11px]">
+            <Calendar className="w-4 h-4 text-amber-400" />
+            <span>Time Filter:</span>
+          </div>
+
+          {/* 1. Month Filter */}
+          <div className="flex items-center gap-1.5">
+            <span className="text-slate-400 font-medium">Month:</span>
+            {availableMonthsInJobs.length > 0 ? (
+              <select
+                value={selectedMonth}
+                onChange={(e) => {
+                  setSelectedMonth(e.target.value);
+                  if (selectedDate && !selectedDate.startsWith(e.target.value)) {
+                    setSelectedDate('');
+                  }
+                }}
+                className="px-2.5 py-1.5 bg-slate-950 border border-slate-700 rounded-xl text-xs text-slate-200 focus:outline-none focus:border-amber-500 cursor-pointer font-medium"
+              >
+                <option value="">All Months ({jobs.length})</option>
+                {availableMonthsInJobs.map((m) => (
+                  <option key={m.value} value={m.value}>
+                    {m.label} ({m.count} jobs)
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <input
+                type="month"
+                value={selectedMonth}
+                onChange={(e) => {
+                  setSelectedMonth(e.target.value);
+                  if (selectedDate && !selectedDate.startsWith(e.target.value)) {
+                    setSelectedDate('');
+                  }
+                }}
+                className="px-2.5 py-1.5 bg-slate-950 border border-slate-700 rounded-xl text-xs text-white focus:outline-none focus:border-amber-500 [color-scheme:dark] font-mono cursor-pointer"
+              />
+            )}
+            <input
+              type="month"
+              value={selectedMonth}
+              onChange={(e) => {
+                setSelectedMonth(e.target.value);
+                if (selectedDate && !selectedDate.startsWith(e.target.value)) {
+                  setSelectedDate('');
+                }
+              }}
+              title="Pick any custom month"
+              className="px-2 py-1.5 bg-slate-950 border border-slate-700 rounded-xl text-xs text-white focus:outline-none focus:border-amber-500 [color-scheme:dark] font-mono cursor-pointer hidden lg:inline-block"
+            />
+            <button
+              type="button"
+              onClick={() => {
+                const currentMonthIso = todayIso.substring(0, 7);
+                setSelectedMonth(currentMonthIso);
+                setSelectedDate('');
+              }}
+              className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold border transition-colors cursor-pointer ${
+                selectedMonth === todayIso.substring(0, 7) && !selectedDate
+                  ? 'bg-amber-500 text-slate-950 border-amber-400 font-bold'
+                  : 'bg-slate-950 text-slate-300 border-slate-800 hover:border-slate-700 hover:text-white'
+              }`}
+            >
+              This Month
+            </button>
+          </div>
+
+          <span className="text-slate-700 hidden sm:inline">|</span>
+
+          {/* 2. Date Filter */}
+          <div className="flex items-center gap-1.5">
+            <span className="text-slate-400 font-medium">Exact Date:</span>
+            <input
+              type="date"
+              value={selectedDate}
+              onChange={(e) => {
+                const val = e.target.value;
+                setSelectedDate(val);
+                if (val) {
+                  setSelectedMonth(val.substring(0, 7));
+                }
+              }}
+              className="px-2.5 py-1.5 bg-slate-950 border border-slate-700 rounded-xl text-xs text-white focus:outline-none focus:border-amber-500 [color-scheme:dark] font-mono cursor-pointer"
+            />
+            <button
+              type="button"
+              onClick={() => {
+                setSelectedDate(todayIso);
+                setSelectedMonth(todayIso.substring(0, 7));
+              }}
+              className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold border transition-colors cursor-pointer ${
+                selectedDate === todayIso
+                  ? 'bg-amber-500 text-slate-950 border-amber-400 font-bold'
+                  : 'bg-slate-950 text-slate-300 border-slate-800 hover:border-slate-700 hover:text-white'
+              }`}
+            >
+              Today
+            </button>
+          </div>
+        </div>
+
+        {/* Clear Filter / Active Indicator */}
+        {(selectedMonth || selectedDate) && (
+          <div className="flex items-center gap-2 pt-2 md:pt-0 border-t md:border-t-0 border-slate-800 shrink-0">
+            <span className="px-2.5 py-1 rounded-lg bg-amber-500/15 text-amber-300 border border-amber-500/30 text-xs font-mono font-medium flex items-center gap-1.5">
+              <Calendar className="w-3.5 h-3.5 text-amber-400" />
+              <span>
+                {selectedDate ? `Date: ${formatDisplayDate(selectedDate)}` : `Month: ${formatDisplayMonth(selectedMonth)}`}
+              </span>
+              <span className="text-slate-400 font-normal">({filteredJobs.length} jobs)</span>
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                setSelectedMonth('');
+                setSelectedDate('');
+              }}
+              className="px-2.5 py-1 text-xs font-semibold text-rose-300 hover:text-rose-200 bg-rose-950/40 hover:bg-rose-950/70 border border-rose-800/60 rounded-lg transition-colors cursor-pointer flex items-center gap-1"
+              title="Clear date and month filters"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span>Reset</span>
+            </button>
+          </div>
+        )}
+      </div>
+
       {/* Jobs List */}
       {filteredJobs.length === 0 ? (
         <div className="p-12 text-center bg-slate-900 border border-slate-800 rounded-2xl">
@@ -377,10 +602,18 @@ export const PendingJobsView: React.FC<PendingJobsViewProps> = ({
                         <span>Not Completed</span>
                       </span>
                     ) : isCompleted ? (
-                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md text-[11px] font-bold font-mono bg-emerald-950 text-emerald-300 border border-emerald-800">
-                        <CheckCircle className="w-3 h-3 text-emerald-400" />
-                        <span>Completed</span>
-                      </span>
+                      <div className="flex items-center gap-1.5">
+                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md text-[11px] font-bold font-mono bg-emerald-950 text-emerald-300 border border-emerald-800">
+                          <CheckCircle className="w-3 h-3 text-emerald-400" />
+                          <span>Completed</span>
+                        </span>
+                        {job.completedAt && (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-mono text-emerald-400 bg-emerald-950/60 border border-emerald-800/60">
+                            <Clock className="w-3 h-3" />
+                            <span>{job.completedAt}</span>
+                          </span>
+                        )}
+                      </div>
                     ) : (
                       <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md text-[11px] font-bold font-mono bg-amber-950 text-amber-300 border border-amber-800">
                         <Clock className="w-3 h-3 text-amber-400" />
@@ -829,6 +1062,13 @@ export const PendingJobsView: React.FC<PendingJobsViewProps> = ({
                         <span>URGENT</span>
                       </span>
                     )}
+
+                    {isCompleted && detailModalJob.completedAt && (
+                      <span className="px-2.5 py-0.5 rounded-lg text-xs font-mono text-emerald-400 bg-emerald-950/60 border border-emerald-800/60 flex items-center gap-1">
+                        <Clock className="w-3.5 h-3.5" />
+                        <span>Completed: {detailModalJob.completedAt}</span>
+                      </span>
+                    )}
                   </div>
 
                   <span className="text-[11px] font-mono text-slate-500">
@@ -946,10 +1186,16 @@ export const PendingJobsView: React.FC<PendingJobsViewProps> = ({
                                 <span>URGENT</span>
                               </span>
                             )}
+                            {detailModalJob.pressPhotoUrl && (
+                              <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-amber-500/15 text-amber-300 border border-amber-500/30 flex items-center gap-1">
+                                <Camera className="w-3 h-3 text-amber-400" />
+                                <span>Photo Attached (Click stage to view)</span>
+                              </span>
+                            )}
                           </div>
 
                           <div className="flex items-center gap-1.5 text-xs text-amber-400 group-hover:translate-x-0.5 transition-transform font-semibold">
-                            <span>Open Press Popup</span>
+                            <span>Open Press Stage Popup</span>
                             <ExternalLink className="w-3.5 h-3.5" />
                           </div>
                         </div>
@@ -963,35 +1209,6 @@ export const PendingJobsView: React.FC<PendingJobsViewProps> = ({
                     </div>
                   );
                 })()}
-
-                {/* Optional Press Photo Proof */}
-                {detailModalJob.pressPhotoUrl && (
-                  <div className="p-3.5 rounded-xl bg-slate-950 border border-amber-500/30 space-y-2">
-                    <div className="flex items-center justify-between text-xs">
-                      <span className="font-bold text-amber-300 flex items-center gap-1.5">
-                        <Camera className="w-3.5 h-3.5 text-amber-400" />
-                        <span>Press Run / Print Proof Photo</span>
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => setPreviewImage({ url: detailModalJob.pressPhotoUrl!, title: `${detailModalJob.jobName} - Press Proof` })}
-                        className="text-[11px] text-amber-400 hover:text-amber-300 underline font-medium cursor-pointer"
-                      >
-                        View Full Size
-                      </button>
-                    </div>
-                    <div 
-                      onClick={() => setPreviewImage({ url: detailModalJob.pressPhotoUrl!, title: `${detailModalJob.jobName} - Press Proof` })}
-                      className="cursor-pointer group relative overflow-hidden rounded-lg border border-slate-800"
-                    >
-                      <img
-                        src={detailModalJob.pressPhotoUrl}
-                        alt="Press Proof"
-                        className="w-full h-36 object-cover group-hover:scale-105 transition-transform duration-200"
-                      />
-                    </div>
-                  </div>
-                )}
 
                 {/* SECTION: MANUFACTURING PROCESSES & COMPLETION DATES */}
                 <div className="space-y-3 pt-2 border-t border-slate-800">
@@ -1143,7 +1360,12 @@ export const PendingJobsView: React.FC<PendingJobsViewProps> = ({
                                   </div>
                                 </div>
 
-                                <div className="flex items-center gap-3 shrink-0 self-start sm:self-auto font-mono text-[11px]">
+                                <div className="flex flex-col sm:flex-row sm:items-center gap-2 shrink-0 self-start sm:self-auto font-mono text-[11px]">
+                                  {it.isExistingStock && (
+                                    <span className="px-2 py-0.5 rounded text-[10px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                                      Existing Stock
+                                    </span>
+                                  )}
                                   <span className={`px-2.5 py-1 rounded-lg font-bold ${
                                     it.status === 'Received'
                                       ? 'bg-emerald-950 text-emerald-300 border border-emerald-800'
@@ -1151,6 +1373,13 @@ export const PendingJobsView: React.FC<PendingJobsViewProps> = ({
                                   }`}>
                                     {it.status === 'Received' ? '✅ Received' : '⏳ Not Received'}
                                   </span>
+
+                                  {it.status === 'Received' && it.receivedAt && (
+                                    <span className="text-[10px] text-emerald-400 flex items-center gap-1 font-semibold">
+                                      <Clock className="w-3 h-3" />
+                                      <span>{it.receivedAt}</span>
+                                    </span>
+                                  )}
 
                                   <div className="flex items-center gap-1 text-sky-400 group-hover:translate-x-0.5 transition-transform text-xs font-semibold">
                                     <span>Quick Controls</span>
@@ -1194,7 +1423,7 @@ export const PendingJobsView: React.FC<PendingJobsViewProps> = ({
                                   </div>
                                 </div>
 
-                                <div className="flex items-center gap-3 shrink-0 self-start sm:self-auto font-mono text-[11px]">
+                                <div className="flex flex-col sm:flex-row sm:items-center gap-2 shrink-0 self-start sm:self-auto font-mono text-[11px]">
                                   <span className={`px-2.5 py-1 rounded-lg font-bold ${
                                     it.status === 'Received'
                                       ? 'bg-emerald-950 text-emerald-300 border border-emerald-800'
@@ -1202,6 +1431,13 @@ export const PendingJobsView: React.FC<PendingJobsViewProps> = ({
                                   }`}>
                                     {it.status === 'Received' ? '✅ Received' : '⏳ Not Received'}
                                   </span>
+
+                                  {it.status === 'Received' && it.receivedAt && (
+                                    <span className="text-[10px] text-emerald-400 flex items-center gap-1 font-semibold">
+                                      <Clock className="w-3 h-3" />
+                                      <span>{it.receivedAt}</span>
+                                    </span>
+                                  )}
 
                                   <div className="flex items-center gap-1 text-purple-400 group-hover:translate-x-0.5 transition-transform text-xs font-semibold">
                                     <span>Quick Controls</span>
@@ -1341,19 +1577,38 @@ export const PendingJobsView: React.FC<PendingJobsViewProps> = ({
                     <span className="text-xs text-slate-400">Order Date:</span>
                     <span className="text-[11px] font-mono text-slate-400">{item.orderedAt}</span>
                   </div>
+
+                  {item.receivedAt && (
+                    <div className="flex items-center justify-between text-emerald-400">
+                      <span className="text-xs font-semibold flex items-center gap-1">
+                        <Clock className="w-3.5 h-3.5" />
+                        <span>Received Time:</span>
+                      </span>
+                      <span className="text-[11px] font-mono font-bold">{item.receivedAt}</span>
+                    </div>
+                  )}
+
+                  {item.isExistingStock && (
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-slate-400">Fulfillment Type:</span>
+                      <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                        In-House Existing Stock
+                      </span>
+                    </div>
+                  )}
                 </div>
 
-                {/* Optional Die/Material Photo */}
-                {item.photoUrl && (
+                {/* Optional Die Tooling Photo (Only for Die items, Board Stock has no photos) */}
+                {isDie && item.photoUrl && (
                   <div className="p-3.5 rounded-xl bg-slate-950 border border-purple-500/30 space-y-2">
                     <div className="flex items-center justify-between text-xs">
                       <span className="font-bold text-purple-300 flex items-center gap-1.5">
                         <Camera className="w-3.5 h-3.5 text-purple-400" />
-                        <span>Tooling / Material Photo</span>
+                        <span>Die Tooling Photo</span>
                       </span>
                       <button
                         type="button"
-                        onClick={() => setPreviewImage({ url: item.photoUrl!, title: `${item.dieMaker || item.stockType} Proof` })}
+                        onClick={() => setPreviewImage({ url: item.photoUrl!, title: `${item.dieMaker || 'Die'} Tooling Proof` })}
                         className="text-[11px] text-purple-400 hover:text-purple-300 underline font-medium cursor-pointer"
                       >
                         View Full Size
