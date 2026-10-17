@@ -13,21 +13,24 @@ import {
 import { CorrugationJob } from '../types/job';
 
 interface OrderInventoryViewProps {
-  jobs: CorrugationJob[];
+  jobs?: CorrugationJob[];
   onOrderWithoutJob: () => void;
   onOrderForJob: (job: CorrugationJob) => void;
 }
 
 export const OrderInventoryView: React.FC<OrderInventoryViewProps> = ({
-  jobs,
+  jobs = [],
   onOrderWithoutJob,
   onOrderForJob,
 }) => {
   const [activeTab, setActiveTab] = useState<'jobs_without_inventory' | 'without_job'>('jobs_without_inventory');
 
+  // Safely guard jobs list
+  const safeJobs = Array.isArray(jobs) ? jobs.filter(Boolean) : [];
+
   // Jobs that don't have inventory ordered yet
-  const jobsWithoutInventory = jobs.filter((j) => !j.hasInventory);
-  const jobsWithInventory = jobs.filter((j) => j.hasInventory);
+  const jobsWithoutInventory = safeJobs.filter((j) => j && !j.hasInventory);
+  const jobsWithInventory = safeJobs.filter((j) => j && j.hasInventory);
 
   return (
     <div className="space-y-6">
@@ -138,11 +141,12 @@ export const OrderInventoryView: React.FC<OrderInventoryViewProps> = ({
           ) : (
             <div className="grid grid-cols-1 gap-3">
               {jobsWithoutInventory.map((job) => {
-                const isFactory = job.jobPlacement === 'Factory';
+                if (!job) return null;
+                const isFactory = (job.jobPlacement || 'Factory') === 'Factory';
 
                 return (
                   <div
-                    key={job.id}
+                    key={job.id || Math.random().toString()}
                     onClick={() => onOrderForJob(job)}
                     className="p-5 rounded-2xl bg-slate-900 border border-slate-800 hover:border-amber-500/60 hover:bg-slate-900/80 transition-all cursor-pointer flex flex-col sm:flex-row sm:items-center justify-between gap-4 group"
                   >
@@ -156,11 +160,11 @@ export const OrderInventoryView: React.FC<OrderInventoryViewProps> = ({
                           }`}
                         >
                           {isFactory ? <Factory className="w-3 h-3" /> : <Building2 className="w-3 h-3" />}
-                          <span>{job.jobPlacement}</span>
+                          <span>{job.jobPlacement || 'Factory'}</span>
                         </span>
 
                         <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-slate-950 border border-slate-800 text-slate-300">
-                          {job.jobType}
+                          {job.jobType || 'General Corrugation'}
                         </span>
 
                         <span className="text-[11px] font-mono text-amber-400 bg-amber-950/40 px-2 py-0.5 rounded border border-amber-800/40">
@@ -169,11 +173,11 @@ export const OrderInventoryView: React.FC<OrderInventoryViewProps> = ({
                       </div>
 
                       <h4 className="text-base font-bold text-white group-hover:text-amber-400 transition-colors">
-                        {job.jobName}
+                        {job.jobName || 'Unnamed Job'}
                       </h4>
 
                       <p className="text-xs text-slate-400">
-                        Created on {job.createdAt} {job.notes && `· Note: ${job.notes}`}
+                        Created on {job.createdAt || 'N/A'} {job.notes && `· Note: ${job.notes}`}
                       </p>
                     </div>
 

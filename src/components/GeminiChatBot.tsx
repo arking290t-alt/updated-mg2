@@ -120,7 +120,7 @@ Ask any question or pick an operational prompt below!`,
         timestamp: new Date().toISOString(),
       };
 
-      const res = await fetch('/api/gemini/chat', {
+      const res = await fetch('/api/ai/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -136,7 +136,7 @@ Ask any question or pick an operational prompt below!`,
       }
 
       const data = await res.json();
-      const modelReply = data.reply || 'No response received from Gemini.';
+      const modelReply = data.reply || 'No response received from AI backend.';
 
       const modelMsg: ChatMessage = {
         id: `model-${Date.now()}`,
@@ -151,7 +151,7 @@ Ask any question or pick an operational prompt below!`,
       const errorMsg: ChatMessage = {
         id: `error-${Date.now()}`,
         role: 'model',
-        text: `Error connecting to Gemini API: ${err.message || 'Unable to reach server'}. Please try again.`,
+        text: `Error connecting to AI chat backend: ${err.message || 'Unable to reach server'}. Please try again.`,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       };
       setMessages((prev) => [...prev, errorMsg]);
@@ -196,7 +196,7 @@ Ask any question or pick an operational prompt below!`,
           <div>
             <div className="flex items-center gap-2">
               <h3 className="text-sm font-bold text-white tracking-tight">
-                Gemini Industrial Reasoning Engine
+                Factory AI Reasoning Engine
               </h3>
               <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 flex items-center gap-1">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
@@ -388,7 +388,7 @@ Ask any question or pick an operational prompt below!`,
             value={inputText}
             onChange={(e) => setInputText(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Ask Gemini to critically analyze jobs, diagnose bottlenecks, or evaluate corrugator operations..."
+            placeholder="Ask AI to analyze jobs, diagnose bottlenecks, or evaluate corrugator operations..."
             rows={1}
             disabled={isLoading}
             className="flex-1 bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-amber-500 resize-none max-h-24 disabled:opacity-50"

@@ -384,6 +384,107 @@ export const EmptyDashboard: React.FC<EmptyDashboardProps> = ({ onLogout }) => {
     }
   };
 
+  // Helper: When a job is completed, automatically mark all attached stock inventory as Used
+  const markAttachedInventoryUsed = async (
+    jobId: string,
+    jobName?: string,
+    jobType?: string,
+    notes?: string,
+    completedTime?: string
+  ) => {
+    const timestamp = completedTime || formatReceivedTimestamp();
+    const targetJob = jobs.find((j) => j.id === jobId);
+    const finalJobName = jobName || targetJob?.jobName || 'Completed Job';
+    const finalDesc = `${jobType || targetJob?.jobType || 'Manufacturing Run'}${
+      notes || targetJob?.notes ? ' - ' + (notes || targetJob?.notes) : ''
+    }`;
+
+    // Find all inventory items attached to this job that are not already marked used
+    const attachedItems = inventory.filter(
+      (i) =>
+        !i.isUsed &&
+        ((i.jobId && i.jobId === jobId) ||
+          (i.jobName && finalJobName && i.jobName.trim().toLowerCase() === finalJobName.trim().toLowerCase()))
+    );
+
+    if (attachedItems.length > 0) {
+      setInventory((prev) =>
+        prev.map((it) => {
+          const isMatch =
+            !it.isUsed &&
+            ((it.jobId && it.jobId === jobId) ||
+              (it.jobName && finalJobName && it.jobName.trim().toLowerCase() === finalJobName.trim().toLowerCase()));
+          if (isMatch) {
+            return {
+              ...it,
+              isUsed: true,
+              status: 'Used' as const,
+              usedAt: timestamp,
+              usedJobId: jobId,
+              usedJobName: finalJobName,
+              usedJobDescription: finalDesc,
+            };
+          }
+          return it;
+        })
+      );
+
+      for (const item of attachedItems) {
+        try {
+          await updateInventoryItemInFirestore(item.id, {
+            isUsed: true,
+            status: 'Used',
+            usedAt: timestamp,
+            usedJobId: jobId,
+            usedJobName: finalJobName,
+            usedJobDescription: finalDesc,
+          });
+        } catch (e) {
+          console.warn(`Failed to mark inventory ${item.id} as used:`, e);
+        }
+      }
+    }
+  };
+
+  const unmarkAttachedInventoryUsed = async (jobId: string) => {
+    // Only revert items that were automatically marked as used by this specific jobId
+    const autoUsedItems = inventory.filter((i) => i.isUsed && i.usedJobId === jobId);
+
+    if (autoUsedItems.length > 0) {
+      setInventory((prev) =>
+        prev.map((it) => {
+          if (it.isUsed && it.usedJobId === jobId) {
+            return {
+              ...it,
+              isUsed: false,
+              status: (it.receivedAt ? 'Received' : 'Not Received') as any,
+              usedAt: undefined,
+              usedJobId: undefined,
+              usedJobName: undefined,
+              usedJobDescription: undefined,
+            };
+          }
+          return it;
+        })
+      );
+
+      for (const item of autoUsedItems) {
+        try {
+          await updateInventoryItemInFirestore(item.id, {
+            isUsed: false,
+            status: item.receivedAt ? 'Received' : 'Not Received',
+            usedAt: undefined,
+            usedJobId: undefined,
+            usedJobName: undefined,
+            usedJobDescription: undefined,
+          });
+        } catch (e) {
+          console.warn(`Failed to unmark inventory ${item.id}:`, e);
+        }
+      }
+    }
+  };
+
   // Handler: Update Job Status (Pending, Not Completed, Completed) with Firestore sync
   const handleSetJobStatus = async (jobId: string, status: JobStatus) => {
     const completedAt = status === 'Completed' ? formatReceivedTimestamp() : undefined;
@@ -398,6 +499,19 @@ export const EmptyDashboard: React.FC<EmptyDashboardProps> = ({ onLogout }) => {
       setTimeout(() => setSyncStatus('Live Connected (mg-manager-3ab66)'), 3000);
     } catch (err: any) {
       console.error('Failed to update job status in Firestore:', err);
+    }
+
+    if (status === 'Completed') {
+      const targetJob = jobs.find((j) => j.id === jobId);
+      await markAttachedInventoryUsed(
+        jobId,
+        targetJob?.jobName,
+        targetJob?.jobType,
+        targetJob?.notes,
+        completedAt
+      );
+    } else {
+      await unmarkAttachedInventoryUsed(jobId);
     }
   };
 
@@ -434,6 +548,19 @@ export const EmptyDashboard: React.FC<EmptyDashboardProps> = ({ onLogout }) => {
     } catch (err) {
       console.error('Failed to update job details:', err);
     }
+
+    if (updates.status === 'Completed') {
+      const targetJob = jobs.find((j) => j.id === jobId);
+      await markAttachedInventoryUsed(
+        jobId,
+        updates.jobName || targetJob?.jobName,
+        updates.jobType || targetJob?.jobType,
+        updates.notes || targetJob?.notes,
+        updates.completedAt
+      );
+    } else if (updates.status) {
+      await unmarkAttachedInventoryUsed(jobId);
+    }
   };
 
   const handleUpdateInventoryDetails = async (itemId: string, updates: Partial<InventoryItem>) => {
@@ -467,11 +594,11 @@ export const EmptyDashboard: React.FC<EmptyDashboardProps> = ({ onLogout }) => {
     }
   };
 
-  const activeQueueCount = jobs.filter((j) => j.status !== 'Completed').length;
-  const notCompletedCount = jobs.filter((j) => j.status === 'Not Completed').length;
-  const jobsNeedingInventoryCount = jobs.filter((j) => !j.hasInventory).length;
-  const urgentStockCount = inventory.filter((i) => i.isUrgent).length;
-  const urgentJobCount = jobs.filter((j) => j.isUrgent).length;
+  const activeQueueCount = (jobs || []).filter((j) => j && j.status !== 'Completed').length;
+  const notCompletedCount = (jobs || []).filter((j) => j && j.status === 'Not Completed').length;
+  const jobsNeedingInventoryCount = (jobs || []).filter((j) => j && !j.hasInventory).length;
+  const urgentStockCount = (inventory || []).filter((i) => i && i.isUrgent).length;
+  const urgentJobCount = (jobs || []).filter((j) => j && j.isUrgent).length;
   const urgentTotalCount = urgentStockCount + urgentJobCount;
 
   return (
@@ -689,7 +816,7 @@ export const EmptyDashboard: React.FC<EmptyDashboardProps> = ({ onLogout }) => {
                 }`}
               >
                 <LayoutDashboard className="w-4 h-4 text-amber-400" />
-                <span>Dashboard & Gemini AI</span>
+                <span>Dashboard & Factory AI</span>
               </button>
 
               {/* 1. SECTION: JOBS */}
@@ -1042,7 +1169,7 @@ export const EmptyDashboard: React.FC<EmptyDashboardProps> = ({ onLogout }) => {
                   </div>
 
                   <p className="text-xs text-slate-400 leading-relaxed">
-                    All jobs and inventory orders are continuously synced with your Firestore database (<code className="text-amber-300 font-mono">mg-manager-3ab66</code>). Gemini AI can read this entire database live to answer questions or assist with factory planning.
+                    All jobs and inventory orders are continuously synced with your Firestore database (<code className="text-amber-300 font-mono">mg-manager-3ab66</code>). The AI Assistant can read this entire database live to answer questions or assist with factory planning.
                   </p>
 
                   <div className="grid grid-cols-2 gap-3">
@@ -1132,7 +1259,7 @@ export const EmptyDashboard: React.FC<EmptyDashboardProps> = ({ onLogout }) => {
         {/* VIEW 3: Order Inventory View (Order Without Job, and Existing Jobs Without Inventory) */}
         {currentView === 'order_inventory' && (
           <OrderInventoryView
-            jobs={jobs}
+            jobs={jobs || []}
             onOrderWithoutJob={handleOpenOrderWithoutJob}
             onOrderForJob={handleOpenOrderForJob}
           />
@@ -1141,7 +1268,8 @@ export const EmptyDashboard: React.FC<EmptyDashboardProps> = ({ onLogout }) => {
         {/* VIEW 4: Existing Inventory Registry View */}
         {currentView === 'existing_inventory' && (
           <ExistingInventoryView
-            inventory={inventory}
+            inventory={inventory || []}
+            jobs={jobs || []}
             onOpenOrderModal={handleOpenOrderWithoutJob}
             onDeleteInventory={handleDeleteInventory}
             onUpdateInventoryDetails={handleUpdateInventoryDetails}
@@ -1151,11 +1279,11 @@ export const EmptyDashboard: React.FC<EmptyDashboardProps> = ({ onLogout }) => {
         {/* VIEW 5: Data Operations Registry View (Ordered Stock & Press Data) */}
         {currentView === 'data' && (
           <PlantDataView
-            jobs={jobs}
-            inventory={inventory}
-            availablePresses={presses}
-            availableStockTypes={stockTypes}
-            availableSuppliers={suppliers}
+            jobs={jobs || []}
+            inventory={inventory || []}
+            availablePresses={presses || INITIAL_PRESS_NAMES}
+            availableStockTypes={stockTypes || INITIAL_STOCK_TYPES}
+            availableSuppliers={suppliers || COMMON_SUPPLIERS}
             initialTab={dataTab}
             onUpdateJobDetails={handleUpdateJobDetails}
             onDeleteJob={handleDeleteJob}
@@ -1175,7 +1303,7 @@ export const EmptyDashboard: React.FC<EmptyDashboardProps> = ({ onLogout }) => {
         isOpen={isNewJobModalOpen}
         onClose={() => setIsNewJobModalOpen(false)}
         onSaveJob={handleSaveJob}
-        availableTypes={jobTypes}
+        availableTypes={jobTypes || []}
         onAddNewType={handleAddNewJobType}
         onDeleteType={handleDeleteJobType}
       />
@@ -1185,23 +1313,23 @@ export const EmptyDashboard: React.FC<EmptyDashboardProps> = ({ onLogout }) => {
         isOpen={isOrderInventoryModalOpen}
         onClose={() => setIsOrderInventoryModalOpen(false)}
         onSaveInventoryOrders={handleSaveInventoryOrders}
-        availableStockTypes={stockTypes}
+        availableStockTypes={stockTypes || INITIAL_STOCK_TYPES}
         onAddNewStockType={handleAddNewStockType}
         onDeleteStockType={handleDeleteStockType}
-        availableSuppliers={suppliers}
+        availableSuppliers={suppliers || COMMON_SUPPLIERS}
         onAddNewSupplier={handleAddNewSupplier}
         onDeleteSupplier={handleDeleteSupplier}
-        availablePresses={presses}
+        availablePresses={presses || INITIAL_PRESS_NAMES}
         onAddNewPress={handleAddNewPress}
         onDeletePress={handleDeletePress}
         targetJob={targetJobForInventory}
-        existingInventory={inventory}
-        availableJobs={jobs}
-        availableJobTypes={jobTypes}
+        existingInventory={inventory || []}
+        availableJobs={jobs || []}
+        availableJobTypes={jobTypes || []}
         onAddNewJobType={handleAddNewJobType}
-        availableDieMakers={dieMakers}
+        availableDieMakers={dieMakers || INITIAL_DIE_MAKERS}
         onAddNewDieMaker={handleAddNewDieMaker}
-        availablePunchTypes={punchTypes}
+        availablePunchTypes={punchTypes || INITIAL_PUNCH_TYPES}
         onAddNewPunchType={handleAddNewPunchType}
       />
 

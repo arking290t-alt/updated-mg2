@@ -6,6 +6,7 @@
 import React, { useState } from 'react';
 import { LoginScreen } from './components/LoginScreen';
 import { EmptyDashboard } from './components/EmptyDashboard';
+import { ErrorBoundary } from './components/ErrorBoundary';
 
 export default function App() {
   const [currentUser, setCurrentUser] = useState<string | null>(() => {
@@ -22,11 +23,13 @@ export default function App() {
     setCurrentUser(null);
   };
 
-  // If not logged in, show Login Screen (ID: admin, Password: admin)
-  if (!currentUser) {
-    return <LoginScreen onLoginSuccess={handleLoginSuccess} />;
-  }
-
-  // Once authenticated, show Clean Empty Dashboard with Gemini Chat Bot
-  return <EmptyDashboard onLogout={handleLogout} />;
+  return (
+    <ErrorBoundary>
+      {!currentUser ? (
+        <LoginScreen onLoginSuccess={handleLoginSuccess} />
+      ) : (
+        <EmptyDashboard onLogout={handleLogout} />
+      )}
+    </ErrorBoundary>
+  );
 }

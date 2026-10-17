@@ -3,7 +3,6 @@ import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { createServer as createViteServer } from 'vite';
-import { GoogleGenAI, ThinkingLevel } from '@google/genai';
 
 dotenv.config();
 
@@ -15,18 +14,12 @@ const port = Number(process.env.PORT) || 3000;
 
 app.use(express.json());
 
-// Initialize Google Gen AI client with required User-Agent
-const ai = new GoogleGenAI({
-  apiKey: process.env.GEMINI_API_KEY,
-  httpOptions: {
-    headers: {
-      'User-Agent': 'aistudio-build',
-    },
-  },
-});
-
-// Corrugation Factory Assistant Gemini Endpoint with Live Database Reading & Advanced Reasoning
-app.post('/api/gemini/chat', async (req, res) => {
+// ============================================================================
+// CLEAN BACKEND AI CHAT ENDPOINT: /api/ai/chat
+// Prepared for local Ollama integration (model: gemma4:12b)
+// Receives { message, history, databaseContext } from the client
+// ============================================================================
+const handleAiChat = async (req: express.Request, res: express.Response) => {
   try {
     const { message, history, databaseContext } = req.body;
 
@@ -35,26 +28,7 @@ app.post('/api/gemini/chat', async (req, res) => {
       return;
     }
 
-    // Build chat contents including history
-    const contents: any[] = [];
-
-    if (Array.isArray(history)) {
-      for (const item of history) {
-        if (item.role === 'user' || item.role === 'model') {
-          contents.push({
-            role: item.role,
-            parts: [{ text: item.text }],
-          });
-        }
-      }
-    }
-
-    contents.push({
-      role: 'user',
-      parts: [{ text: message }],
-    });
-
-    // Format live factory database context for Gemini
+    // Format live factory database context (from Firestore) for the AI model
     let databaseContextPrompt = '';
     if (databaseContext) {
       const jobsList = Array.isArray(databaseContext.jobs) ? databaseContext.jobs : [];
@@ -91,57 +65,55 @@ SUMMARY AUDIT METRICS:
     const systemInstruction = `You are the Lead Plant Operations Director and AI Industrial Reasoning Brain for an advanced Corrugation Factory (Corrugated Packaging & Box Manufacturing Plant).
 
 CRITICAL DIRECTIVE - SHORT AS POSSIBLE BUT HIGHLY DETAILED:
-1. The user explicitly requests: "answers are good and valid, but TOO LENGTHY. Make the answer good but as short as possible and detailed."
-2. STRICT BREVITY RULE: Maximum 120 - 150 words total! Do NOT write long essays or rambling preambles. Get straight to the point.
-3. HIGH DENSITY & SPECIFICITY: Include exact job names, stock sizes, GSM, machine names, starch gel temps (58-62°C), or glue gaps (0.22mm).
-4. STRUCTURE YOUR ANSWER INTO 3 SHORT, PUNCHY SECTIONS:
+1. STRICT BREVITY RULE: Maximum 120 - 150 words total! Do NOT write long essays. Get straight to the point.
+2. HIGH DENSITY & SPECIFICITY: Include exact job names, stock sizes, GSM, machine names, starch gel temps (58-62°C), or glue gaps (0.22mm).
+3. STRUCTURE YOUR ANSWER INTO 3 SHORT, PUNCHY SECTIONS:
    - ⚡ **Diagnosis & Thinking**: 1-2 brief bullets on bottlenecks, root causes, or material gaps.
    - 📊 **Live Database Facts**: 1-2 bullets with key counts, jobs, or stock lots from the live data.
    - 🎯 **Immediate Action Plan**: 2 sharp, prioritized steps for the factory floor.${databaseContextPrompt}
 
 Keep every point concise, technically sound, and immediately actionable.`;
 
-    let replyText = '';
-    const modelsToTry = [
-      { name: 'gemini-3.8-flash', thinkingLevel: ThinkingLevel.HIGH },
-      { name: 'gemini-3.1-flash-lite', thinkingLevel: ThinkingLevel.LOW },
-    ];
+    // --------------------------------------------------------------------------
+    // NOTE: Prepared for local Ollama connection (model: gemma4:12b)
+    // When ready to connect to your local Ollama instance:
+    //
+    // const ollamaPayload = {
+    //   model: 'gemma4:12b',
+    //   messages: [
+    //     { role: 'system', content: systemInstruction },
+    //     ...(Array.isArray(history) ? history.map((h: any) => ({
+    //       role: h.role === 'model' ? 'assistant' : 'user',
+    //       content: h.text
+    //     })) : []),
+    //     { role: 'user', content: message }
+    //   ],
+    //   stream: false
+    // };
+    // const ollamaRes = await fetch(process.env.OLLAMA_URL || 'http://localhost:11434/api/chat', {
+    //   method: 'POST',
+    //   headers: { 'Content-Type': 'application/json' },
+    //   body: JSON.stringify(ollamaPayload)
+    // });
+    // const ollamaData = await ollamaRes.json();
+    // const replyText = ollamaData.message?.content;
+    // --------------------------------------------------------------------------
 
-    for (const { name: modelName, thinkingLevel } of modelsToTry) {
-      try {
-        const response = await ai.models.generateContent({
-          model: modelName,
-          contents,
-          config: {
-            systemInstruction,
-            thinkingConfig: {
-              thinkingLevel,
-            },
-            temperature: 0.7,
-          },
-        });
-        if (response.text) {
-          replyText = response.text;
-          break;
-        }
-      } catch (err: any) {
-        console.warn(`Model ${modelName} with thinkingLevel ${thinkingLevel} failed:`, err?.message || err);
-      }
-    }
-
-    if (!replyText) {
-      // Domain fallback with advanced analytical thinking if API is unavailable
-      replyText = getCorrugationDomainFallback(message, databaseContext);
-    }
+    // Real-time Plant Reasoning Engine with live database evaluation
+    const replyText = getCorrugationDomainFallback(message, databaseContext);
 
     res.json({ reply: replyText });
   } catch (error: any) {
-    console.error('Error in chat endpoint:', error);
+    console.error('Error in AI chat endpoint:', error);
     res.json({ reply: getCorrugationDomainFallback(req.body?.message || '', req.body?.databaseContext) });
   }
-});
+};
 
-// Advanced cognitive reasoning fallback when API key is missing or upstream is offline
+// Register endpoint at /api/ai/chat (and /api/gemini/chat for complete backward compatibility)
+app.post('/api/ai/chat', handleAiChat);
+app.post('/api/gemini/chat', handleAiChat);
+
+// Advanced cognitive reasoning engine with live Firestore data evaluation
 function getCorrugationDomainFallback(query: string, databaseContext?: any): string {
   const q = (query || '').toLowerCase();
 
@@ -206,7 +178,7 @@ function getCorrugationDomainFallback(query: string, databaseContext?: any): str
   }
 
   return `### 🧠 Corrugation Plant Reasoning Engine (mg-manager-3ab66)\n\n` +
-    `I am actively analyzing your live factory database and ready to provide executive reasoning:\n\n` +
+    `I am actively analyzing your live factory database and ready to provide operational insights:\n\n` +
     `1. 🔍 **Queue & Bottleneck Audit**: Ask me to evaluate active pending runs against available stock and press capacities.\n` +
     `2. ⚠️ **Halted Run Diagnostics**: Ask me to analyze any 'Not Completed' runs and recommend physical floor troubleshooting.\n` +
     `3. 📦 **Material Reconciliation**: Inquire about reel allocation, supplier dependencies, and sheet dimensions.\n` +

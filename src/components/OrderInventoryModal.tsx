@@ -25,7 +25,17 @@ import {
   Sparkles,
   PackageCheck
 } from 'lucide-react';
-import { InventoryItem, CorrugationJob, StockItemEntry, INITIAL_DIE_MAKERS, INITIAL_PUNCH_TYPES, formatReceivedTimestamp } from '../types/job';
+import { 
+  InventoryItem, 
+  CorrugationJob, 
+  StockItemEntry, 
+  INITIAL_STOCK_TYPES,
+  COMMON_SUPPLIERS,
+  INITIAL_PRESS_NAMES,
+  INITIAL_DIE_MAKERS, 
+  INITIAL_PUNCH_TYPES, 
+  formatReceivedTimestamp 
+} from '../types/job';
 import { PhotoDropzone } from './PhotoDropzone';
 
 interface OrderInventoryModalProps {
@@ -34,13 +44,13 @@ interface OrderInventoryModalProps {
   onSaveInventoryOrders: (
     orders: (Omit<InventoryItem, 'id'>)[]
   ) => void;
-  availableStockTypes: string[];
+  availableStockTypes?: string[];
   onAddNewStockType: (newType: string) => void;
   onDeleteStockType?: (type: string) => void;
-  availableSuppliers: string[];
+  availableSuppliers?: string[];
   onAddNewSupplier: (newSupplier: string) => void;
   onDeleteSupplier?: (supplier: string) => void;
-  availablePresses: string[];
+  availablePresses?: string[];
   onAddNewPress: (newPress: string) => void;
   onDeletePress?: (press: string) => void;
   targetJob?: CorrugationJob | null;
@@ -59,13 +69,13 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
   isOpen,
   onClose,
   onSaveInventoryOrders,
-  availableStockTypes,
+  availableStockTypes = INITIAL_STOCK_TYPES,
   onAddNewStockType,
   onDeleteStockType,
-  availableSuppliers,
+  availableSuppliers = COMMON_SUPPLIERS,
   onAddNewSupplier,
   onDeleteSupplier,
-  availablePresses,
+  availablePresses = INITIAL_PRESS_NAMES,
   onAddNewPress,
   onDeletePress,
   targetJob,
@@ -80,6 +90,16 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
 }) => {
   const todayIso = new Date().toISOString().split('T')[0];
 
+  // Defensive safe defaults for all lists
+  const safeStockTypes = Array.isArray(availableStockTypes) && availableStockTypes.length > 0 ? availableStockTypes : INITIAL_STOCK_TYPES;
+  const safeSuppliers = Array.isArray(availableSuppliers) && availableSuppliers.length > 0 ? availableSuppliers : COMMON_SUPPLIERS;
+  const safePresses = Array.isArray(availablePresses) && availablePresses.length > 0 ? availablePresses : INITIAL_PRESS_NAMES;
+  const safeDieMakers = Array.isArray(availableDieMakers) && availableDieMakers.length > 0 ? availableDieMakers : INITIAL_DIE_MAKERS;
+  const safePunchTypes = Array.isArray(availablePunchTypes) && availablePunchTypes.length > 0 ? availablePunchTypes : INITIAL_PUNCH_TYPES;
+  const safeJobTypes = Array.isArray(availableJobTypes) && availableJobTypes.length > 0 ? availableJobTypes : ['General Corrugation'];
+  const safeJobs = Array.isArray(availableJobs) ? availableJobs.filter(Boolean) : [];
+  const safeInventory = Array.isArray(existingInventory) ? existingInventory.filter(Boolean) : [];
+
   // Primary Order Category: Stock vs Die
   const [activeCategory, setActiveCategory] = useState<'Stock' | 'Die'>('Stock');
 
@@ -88,8 +108,8 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
 
   // DIE & JOB SPECIFIC STATE
   const [selectedJobId, setSelectedJobId] = useState<string>(targetJob ? targetJob.id : '');
-  const [dieJobName, setDieJobName] = useState<string>(targetJob ? targetJob.jobName : '');
-  const [dieJobType, setDieJobType] = useState<string>(targetJob ? targetJob.jobType : (availableJobTypes[0] || 'General Corrugation'));
+  const [dieJobName, setDieJobName] = useState<string>(targetJob ? (targetJob.jobName || '') : '');
+  const [dieJobType, setDieJobType] = useState<string>(targetJob?.jobType || safeJobTypes[0] || 'General Corrugation');
   const [isAddingNewJobType, setIsAddingNewJobType] = useState(false);
   const [newJobTypeInput, setNewJobTypeInput] = useState('');
 
@@ -97,14 +117,19 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
   useEffect(() => {
     if (targetJob) {
       setSelectedJobId(targetJob.id);
-      setDieJobName(targetJob.jobName);
-      setDieJobType(targetJob.jobType || availableJobTypes[0] || 'General Corrugation');
+      setDieJobName(targetJob.jobName || '');
+      setDieJobType(targetJob.jobType || safeJobTypes[0] || 'General Corrugation');
+      if (targetJob.jobSize) {
+        setJobSize(targetJob.jobSize);
+      } else if (targetJob.boardSize) {
+        setJobSize(targetJob.boardSize);
+      }
     } else {
       setSelectedJobId('');
       setDieJobName('');
-      setDieJobType(availableJobTypes[0] || 'General Corrugation');
+      setDieJobType(safeJobTypes[0] || 'General Corrugation');
     }
-  }, [targetJob, isOpen, availableJobTypes]);
+  }, [targetJob, isOpen, safeJobTypes]);
 
   const handleSelectExistingJob = (jobId: string) => {
     setSelectedJobId(jobId);
@@ -112,21 +137,23 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
       setDieJobName('');
       return;
     }
-    const found = availableJobs.find((j) => j.id === jobId);
+    const found = safeJobs.find((j) => j && j.id === jobId);
     if (found) {
-      setDieJobName(found.jobName);
-      setDieJobType(found.jobType || availableJobTypes[0] || 'General Corrugation');
+      setDieJobName(found.jobName || '');
+      setDieJobType(found.jobType || safeJobTypes[0] || 'General Corrugation');
       if (found.jobSize) {
         setJobSize(found.jobSize);
+      } else if (found.boardSize) {
+        setJobSize(found.boardSize);
       }
     }
   };
 
-  const [dieMaker, setDieMaker] = useState<string>(availableDieMakers[0] || 'Apex Laser Dies');
+  const [dieMaker, setDieMaker] = useState<string>(safeDieMakers[0] || 'Apex Laser Dies');
   const [isAddingNewDieMaker, setIsAddingNewDieMaker] = useState(false);
   const [newDieMakerInput, setNewDieMakerInput] = useState('');
 
-  const [punchType, setPunchType] = useState<string>(availablePunchTypes[0] || 'Rotary Die Punch');
+  const [punchType, setPunchType] = useState<string>(safePunchTypes[0] || 'Rotary Die Punch');
   const [isAddingNewPunchType, setIsAddingNewPunchType] = useState(false);
   const [newPunchTypeInput, setNewPunchTypeInput] = useState('');
 
@@ -175,7 +202,7 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
   const [jobSize, setJobSize] = useState('1200 x 850 mm');
 
   // Receiving From (Search & Save)
-  const [receivingFrom, setReceivingFrom] = useState(availableSuppliers[0] || 'Varun Board');
+  const [receivingFrom, setReceivingFrom] = useState(safeSuppliers[0] || 'Varun Board');
   const [supplierSearch, setSupplierSearch] = useState('');
   const [isSupplierDropdownOpen, setIsSupplierDropdownOpen] = useState(false);
   const [isAddingNewSupplier, setIsAddingNewSupplier] = useState(false);
@@ -185,7 +212,7 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
   const [isPrinted, setIsPrinted] = useState(false);
 
   // Press Name (Search & Save)
-  const [pressName, setPressName] = useState(availablePresses[0] || 'Flexo Press 1 (4-Color)');
+  const [pressName, setPressName] = useState(safePresses[0] || 'Flexo Press 1 (4-Color)');
   const [pressSearch, setPressSearch] = useState('');
   const [isPressDropdownOpen, setIsPressDropdownOpen] = useState(false);
   const [isAddingNewPress, setIsAddingNewPress] = useState(false);
@@ -217,40 +244,42 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
 
   // Filtered Stock Types
   const filteredStockTypes = useMemo(() => {
-    if (!stockSearch.trim()) return availableStockTypes;
-    return availableStockTypes.filter((t) =>
-      t.toLowerCase().includes(stockSearch.trim().toLowerCase())
+    const list = Array.isArray(safeStockTypes) ? safeStockTypes.filter(Boolean) : [];
+    if (!stockSearch.trim()) return list;
+    return list.filter((t) =>
+      typeof t === 'string' && t.toLowerCase().includes(stockSearch.trim().toLowerCase())
     );
-  }, [availableStockTypes, stockSearch]);
+  }, [safeStockTypes, stockSearch]);
 
   // Filtered Suppliers (Receiving From)
   const filteredSuppliers = useMemo(() => {
-    if (!supplierSearch.trim()) return availableSuppliers;
-    return availableSuppliers.filter((s) =>
-      s.toLowerCase().includes(supplierSearch.trim().toLowerCase())
+    const list = Array.isArray(safeSuppliers) ? safeSuppliers.filter(Boolean) : [];
+    if (!supplierSearch.trim()) return list;
+    return list.filter((s) =>
+      typeof s === 'string' && s.toLowerCase().includes(supplierSearch.trim().toLowerCase())
     );
-  }, [availableSuppliers, supplierSearch]);
+  }, [safeSuppliers, supplierSearch]);
 
   // Filtered Presses
   const filteredPresses = useMemo(() => {
-    if (!pressSearch.trim()) return availablePresses;
-    return availablePresses.filter((p) =>
-      p.toLowerCase().includes(pressSearch.trim().toLowerCase())
+    const list = Array.isArray(safePresses) ? safePresses.filter(Boolean) : [];
+    if (!pressSearch.trim()) return list;
+    return list.filter((p) =>
+      typeof p === 'string' && p.toLowerCase().includes(pressSearch.trim().toLowerCase())
     );
-  }, [availablePresses, pressSearch]);
+  }, [safePresses, pressSearch]);
 
-  if (!isOpen) return null;
-
-  // Filter existing inventory for available in-house stock items
+  // Filter existing inventory for available in-house stock items (MUST BE CALLED UNCONDITIONALLY BEFORE RETURN)
   const availableExistingStock = useMemo(() => {
-    if (!existingInventory || existingInventory.length === 0) return [];
-    return existingInventory.filter(
-      (item) => item.category !== 'Die' && Boolean(item.stockType)
+    if (!Array.isArray(safeInventory) || safeInventory.length === 0) return [];
+    return safeInventory.filter(
+      (item) => Boolean(item && item.category !== 'Die' && item.stockType && !item.isUsed)
     );
-  }, [existingInventory]);
+  }, [safeInventory]);
 
   const handleSelectExistingStockItem = (exist: InventoryItem) => {
-    setStockType(exist.stockType);
+    if (!exist) return;
+    setStockType(exist.stockType || '');
     if (exist.jobSize) {
       setJobSize(exist.jobSize);
     }
@@ -275,7 +304,7 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
 
     if (isExistingStock) {
       const match = availableExistingStock.find(
-        (it) => it.stockType.toLowerCase() === type.toLowerCase()
+        (it) => (it?.stockType || '').toLowerCase() === (type || '').toLowerCase()
       );
       if (match) {
         if (match.jobSize) setJobSize(match.jobSize);
@@ -611,6 +640,8 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
     onClose();
   };
 
+  if (!isOpen) return null;
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/80 backdrop-blur-sm">
       <div className="w-full max-w-2xl bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl overflow-hidden max-h-[92vh] flex flex-col animate-in fade-in zoom-in-95 duration-150">
@@ -745,8 +776,8 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
                       </div>
                       <div className="text-[11px] text-slate-400 font-mono mt-0.5">
                         {item.category === 'Die'
-                          ? `Job: ${item.jobName || 'Unassigned'} · Maker: ${item.dieMaker} · Punch: ${item.punchType} · Qty: ${item.quantity}`
-                          : `Board Size: ${item.jobSize} · From: ${item.receivingFrom} · Qty: ${item.quantity.toLocaleString()}`}
+                          ? `Job: ${item.jobName || 'Unassigned'} · Maker: ${item.dieMaker || 'N/A'} · Punch: ${item.punchType || 'N/A'} · Qty: ${item.quantity || 1}`
+                          : `Board Size: ${item.jobSize || 'Standard'} · From: ${item.receivingFrom || 'Warehouse'} · Qty: ${Number(item.quantity || 0).toLocaleString()}`}
                       </div>
                     </div>
 
@@ -789,7 +820,7 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
                     <div>
                       <span className="text-[10px] text-slate-400 uppercase font-mono">Job for Die Order:</span>
                       <div className="text-xs font-bold text-white mt-0.5">
-                        {targetJob.jobName}
+                        {targetJob.jobName || 'Selected Job'}
                       </div>
                     </div>
                     <span className="text-[10px] font-mono text-emerald-400 font-semibold bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
@@ -807,9 +838,9 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
                       className="w-full px-3 py-2 bg-slate-900 border border-slate-800 rounded-xl text-xs text-white focus:outline-none focus:border-purple-500 cursor-pointer"
                     >
                       <option value="">-- Select Existing Job --</option>
-                      {availableJobs.map((j) => (
+                      {safeJobs.map((j) => (
                         <option key={j.id} value={j.id}>
-                          {j.jobName} ({j.jobType})
+                          {j.jobName || 'Unnamed'} ({j.jobType || 'General'})
                         </option>
                       ))}
                       <option value="custom">+ Custom / New Job Name</option>
@@ -874,14 +905,11 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
                       onChange={(e) => setDieJobType(e.target.value)}
                       className="w-full px-3 py-2 bg-slate-900 border border-slate-800 rounded-xl text-xs text-white focus:outline-none focus:border-purple-500 cursor-pointer"
                     >
-                      {availableJobTypes.map((t) => (
+                      {safeJobTypes.map((t) => (
                         <option key={t} value={t}>{t}</option>
                       ))}
-                      {dieJobType && !availableJobTypes.includes(dieJobType) && (
+                      {dieJobType && !safeJobTypes.includes(dieJobType) && (
                         <option value={dieJobType}>{dieJobType}</option>
-                      )}
-                      {availableJobTypes.length === 0 && !dieJobType && (
-                        <option value="General Corrugation">General Corrugation</option>
                       )}
                     </select>
                   )}
@@ -937,10 +965,10 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
                   onChange={(e) => setDieMaker(e.target.value)}
                   className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-xs text-white focus:outline-none focus:border-purple-500 cursor-pointer"
                 >
-                  {availableDieMakers.map((m) => (
+                  {safeDieMakers.map((m) => (
                     <option key={m} value={m}>{m}</option>
                   ))}
-                  {dieMaker && !availableDieMakers.includes(dieMaker) && (
+                  {dieMaker && !safeDieMakers.includes(dieMaker) && (
                     <option value={dieMaker}>{dieMaker}</option>
                   )}
                 </select>
@@ -995,10 +1023,10 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
                   onChange={(e) => setPunchType(e.target.value)}
                   className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-xs text-white focus:outline-none focus:border-purple-500 cursor-pointer"
                 >
-                  {availablePunchTypes.map((p) => (
+                  {safePunchTypes.map((p) => (
                     <option key={p} value={p}>{p}</option>
                   ))}
-                  {punchType && !availablePunchTypes.includes(punchType) && (
+                  {punchType && !safePunchTypes.includes(punchType) && (
                     <option value={punchType}>{punchType}</option>
                   )}
                 </select>
@@ -1113,13 +1141,15 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
                         if (checked) {
                           if (availableExistingStock.length > 0) {
                             const match = stockType
-                              ? availableExistingStock.find((it) => it.stockType.toLowerCase() === stockType.toLowerCase())
+                              ? availableExistingStock.find((it) => (it?.stockType || '').toLowerCase() === stockType.toLowerCase())
                               : availableExistingStock[0];
                             const chosen = match || availableExistingStock[0];
-                            handleSelectExistingStockItem(chosen);
+                            if (chosen) {
+                              handleSelectExistingStockItem(chosen);
+                            }
                           } else {
                             setReceivingFrom('Plant Warehouse (In-House Stock)');
-                            const activeJob = targetJob || (selectedJobId && selectedJobId !== 'custom' ? availableJobs.find((j) => j.id === selectedJobId) : undefined);
+                            const activeJob = targetJob || (selectedJobId && selectedJobId !== 'custom' ? safeJobs.find((j) => j && j.id === selectedJobId) : undefined);
                             if (activeJob?.jobSize) setJobSize(activeJob.jobSize);
                             else if (activeJob?.boardSize) setJobSize(activeJob.boardSize);
                           }

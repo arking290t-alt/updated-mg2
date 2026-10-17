@@ -26,7 +26,7 @@ export const PhotoDropzone: React.FC<PhotoDropzoneProps> = ({
   const [isCompressing, setIsCompressing] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const colorStyles = {
+  const colorStylesMap = {
     amber: {
       borderDrag: 'border-amber-400 bg-amber-500/10 shadow-lg shadow-amber-500/10',
       borderDefault: 'border-slate-800 hover:border-amber-500/50 bg-slate-950/60 hover:bg-slate-900',
@@ -59,7 +59,9 @@ export const PhotoDropzone: React.FC<PhotoDropzoneProps> = ({
       badgeBg: 'bg-blue-500/20 text-blue-300 border-blue-500/40',
       previewBorder: 'border-blue-500/40',
     },
-  }[accentColor];
+  };
+
+  const colorStyles = (accentColor && colorStylesMap[accentColor]) ? colorStylesMap[accentColor] : colorStylesMap.amber;
 
   const processFile = (file: File) => {
     if (!file || !file.type.startsWith('image/')) {
