@@ -21,7 +21,8 @@ import {
   BarChart3,
   Scissors,
   Printer,
-  Workflow
+  Workflow,
+  BookOpen
 } from 'lucide-react';
 import { GeminiChatBot } from './GeminiChatBot';
 import { NewJobModal } from './NewJobModal';
@@ -30,6 +31,7 @@ import { OrderInventoryModal } from './OrderInventoryModal';
 import { OrderInventoryView } from './OrderInventoryView';
 import { ExistingInventoryView } from './ExistingInventoryView';
 import { PlantDataView } from './PlantDataView';
+import { DaybookView } from './DaybookView';
 import { 
   CorrugationJob, 
   InventoryItem, 
@@ -73,9 +75,9 @@ export const EmptyDashboard: React.FC<EmptyDashboardProps> = ({ onLogout }) => {
   const [isDataMenuExpanded, setIsDataMenuExpanded] = useState(true);
   const [dataTab, setDataTab] = useState<'stock' | 'die' | 'press' | 'process'>('stock');
   
-  // Views: dashboard | pending_jobs | order_inventory | existing_inventory | data
+  // Views: dashboard | pending_jobs | order_inventory | existing_inventory | data | daybook
   const [currentView, setCurrentView] = useState<
-    'dashboard' | 'pending_jobs' | 'order_inventory' | 'existing_inventory' | 'data'
+    'dashboard' | 'pending_jobs' | 'order_inventory' | 'existing_inventory' | 'data' | 'daybook'
   >('dashboard');
 
   // Modals State
@@ -734,6 +736,19 @@ export const EmptyDashboard: React.FC<EmptyDashboardProps> = ({ onLogout }) => {
               <Workflow className="w-3.5 h-3.5 text-teal-400" />
               <span>Process</span>
             </button>
+
+            {/* Daybook Navigation Tab */}
+            <button
+              onClick={() => setCurrentView('daybook')}
+              className={`px-3 py-1.5 text-xs font-semibold rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap ${
+                currentView === 'daybook'
+                  ? 'bg-amber-500 text-slate-950 font-bold shadow-xs'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              <BookOpen className="w-3.5 h-3.5" />
+              <span>Daybook</span>
+            </button>
           </div>
 
           {/* Top Right: Firebase Status, User & Logout */}
@@ -1077,6 +1092,31 @@ export const EmptyDashboard: React.FC<EmptyDashboardProps> = ({ onLogout }) => {
                 )}
               </div>
 
+              {/* 4. SECTION: DAYBOOK (Office Daybook) */}
+              <div>
+                <button
+                  onClick={() => {
+                    setCurrentView('daybook');
+                    setIsDrawerOpen(false);
+                  }}
+                  className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                    currentView === 'daybook'
+                      ? 'bg-amber-500/10 text-amber-400 border border-amber-500/30 shadow-xs'
+                      : 'bg-slate-950/60 border border-slate-800/80 text-white hover:border-slate-700'
+                  }`}
+                >
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-6 h-6 rounded-md bg-amber-500/20 text-amber-400 flex items-center justify-center">
+                      <BookOpen className="w-3.5 h-3.5" />
+                    </div>
+                    <span>Daybook</span>
+                  </div>
+                  <span className="text-[10px] font-mono text-amber-400 bg-amber-950/60 px-2 py-0.5 rounded border border-amber-800/40 font-semibold">
+                    Accounts
+                  </span>
+                </button>
+              </div>
+
               {/* Firebase Database Status Box */}
               <div className="p-3 rounded-xl bg-slate-950 border border-slate-800/80 text-xs space-y-1.5">
                 <div className="flex items-center justify-between text-slate-300 font-medium">
@@ -1294,6 +1334,11 @@ export const EmptyDashboard: React.FC<EmptyDashboardProps> = ({ onLogout }) => {
             onDeleteInventory={handleDeleteInventory}
             onAddInventoryItem={handleAddCustomInventory}
           />
+        )}
+
+        {/* VIEW 6: Office Daybook */}
+        {currentView === 'daybook' && (
+          <DaybookView />
         )}
 
       </main>

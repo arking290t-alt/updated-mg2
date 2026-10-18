@@ -277,55 +277,81 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
     );
   }, [safeInventory]);
 
-  const handleSelectExistingStockItem = (exist: InventoryItem) => {
-    if (!exist) return;
-    setStockType(exist.stockType || '');
-    if (exist.jobSize) {
-      setJobSize(exist.jobSize);
-    }
-    const source = exist.receivingFrom
-      ? `Plant Warehouse (${exist.receivingFrom})`
-      : 'Plant Warehouse (In-House Stock)';
-    setReceivingFrom(source);
-    if (exist.quantity && exist.quantity > 0) {
-      setQuantity(exist.quantity);
-    }
-    setIsStockDropdownOpen(false);
-    setStockSearch('');
+  // Distinct stock types available in existing warehouse stock
+  const inStockStockTypes = useMemo(() => {
+    const types = new Set<string>();
+    availableExistingStock.forEach((item) => {
+      if (item.stockType && item.stockType.trim()) {
+        types.add(item.stockType.trim());
+      }
+    });
+    return Array.from(types);
+  }, [availableExistingStock]);
+
+  // Distinct sizes available for the currently selected stockType in warehouse inventory
+  const availableSizesForSelectedStockType = useMemo(() => {
+    if (!stockType) return [];
+    const sizes = new Set<string>();
+    availableExistingStock.forEach((it) => {
+      if (
+        (it.stockType || '').trim().toLowerCase() === stockType.trim().toLowerCase() &&
+        Boolean(it.jobSize && it.jobSize.trim())
+      ) {
+        sizes.add(it.jobSize.trim());
+      }
+    });
+    return Array.from(sizes);
+  }, [availableExistingStock, stockType]);
+
+  // Handler: When user selects an existing size option
+  const handleSelectExistingSize = (size: string) => {
+    setJobSize(size);
     setErrorMessage('');
+    if (!size) {
+      setReceivingFrom('');
+      return;
+    }
+
+    const matchingLot = availableExistingStock.find(
+      (it) =>
+        (it.stockType || '').trim().toLowerCase() === stockType.trim().toLowerCase() &&
+        (it.jobSize || '').trim() === size.trim()
+    );
+
+    if (matchingLot) {
+      setReceivingFrom(matchingLot.receivingFrom || 'Plant Warehouse (In-House Stock)');
+      if (matchingLot.quantity && matchingLot.quantity > 0) {
+        setQuantity(matchingLot.quantity);
+      }
+      if (matchingLot.isPrinted !== undefined) {
+        setIsPrinted(matchingLot.isPrinted);
+      }
+      if (matchingLot.pressName) {
+        setPressName(matchingLot.pressName);
+      }
+    } else {
+      setReceivingFrom('Plant Warehouse (In-House Stock)');
+    }
   };
 
-  // Handlers for Stock Type
-  const handleSelectStockType = (type: string) => {
+  // Handler: When user selects a stock type in existing stock mode
+  const handleSelectExistingStockType = (type: string) => {
     setStockType(type);
     setIsStockDropdownOpen(false);
     setStockSearch('');
     setErrorMessage('');
 
-    if (isExistingStock) {
-      const match = availableExistingStock.find(
-        (it) => (it?.stockType || '').toLowerCase() === (type || '').toLowerCase()
-      );
-      if (match) {
-        if (match.jobSize) setJobSize(match.jobSize);
-        setReceivingFrom(
-          match.receivingFrom
-            ? `Plant Warehouse (${match.receivingFrom})`
-            : 'Plant Warehouse (In-House Stock)'
-        );
-        if (match.quantity && match.quantity > 0) {
-          setQuantity(match.quantity);
-        }
-      } else {
-        setReceivingFrom('Plant Warehouse (In-House Stock)');
-        const activeJob = targetJob || (selectedJobId && selectedJobId !== 'custom' ? availableJobs.find((j) => j.id === selectedJobId) : undefined);
-        if (activeJob?.jobSize) {
-          setJobSize(activeJob.jobSize);
-        } else if (activeJob?.boardSize) {
-          setJobSize(activeJob.boardSize);
-        }
-      }
-    }
+    // Do NOT auto-select size or receiving from; user selects size next
+    setJobSize('');
+    setReceivingFrom('');
+  };
+
+  // Handlers for Standard Stock Type (when ordering new stock)
+  const handleSelectStockType = (type: string) => {
+    setStockType(type);
+    setIsStockDropdownOpen(false);
+    setStockSearch('');
+    setErrorMessage('');
   };
 
   const handleSaveStockType = (typeToAdd?: string) => {
@@ -379,16 +405,20 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
   // Validate current single form inputs
   const validateCurrentItem = (): boolean => {
     if (!stockType.trim()) {
-      setErrorMessage('Please select or add a Stock Type.');
+      setErrorMessage(isExistingStock ? 'Please select an In-House Stock Type.' : 'Please select or add a Stock Type.');
       return false;
     }
     if (!jobSize.trim()) {
-      setErrorMessage('Please enter the Job Size.');
+      setErrorMessage(isExistingStock ? 'Please select an Available Size for this stock type.' : 'Please enter the Board Size.');
       return false;
     }
     if (!receivingFrom.trim()) {
-      setErrorMessage('Please select or enter Receiving From source.');
-      return false;
+      if (isExistingStock) {
+        setReceivingFrom('Plant Warehouse (In-House Stock)');
+      } else {
+        setErrorMessage('Please select or enter Receiving From source.');
+        return false;
+      }
     }
     if (quantity <= 0) {
       setErrorMessage('Please enter a valid Quantity.');
@@ -1138,21 +1168,17 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
                       onChange={(e) => {
                         const checked = e.target.checked;
                         setIsExistingStock(checked);
+                        setErrorMessage('');
                         if (checked) {
-                          if (availableExistingStock.length > 0) {
-                            const match = stockType
-                              ? availableExistingStock.find((it) => (it?.stockType || '').toLowerCase() === stockType.toLowerCase())
-                              : availableExistingStock[0];
-                            const chosen = match || availableExistingStock[0];
-                            if (chosen) {
-                              handleSelectExistingStockItem(chosen);
-                            }
-                          } else {
-                            setReceivingFrom('Plant Warehouse (In-House Stock)');
-                            const activeJob = targetJob || (selectedJobId && selectedJobId !== 'custom' ? safeJobs.find((j) => j && j.id === selectedJobId) : undefined);
-                            if (activeJob?.jobSize) setJobSize(activeJob.jobSize);
-                            else if (activeJob?.boardSize) setJobSize(activeJob.boardSize);
-                          }
+                          // Clear so user can select stock type first
+                          setStockType('');
+                          setJobSize('');
+                          setReceivingFrom('');
+                        } else {
+                          // Revert to new order standard defaults
+                          setStockType(safeStockTypes[0] || '');
+                          setJobSize(targetJob?.jobSize || targetJob?.boardSize || '1200 x 850 mm');
+                          setReceivingFrom(safeSuppliers[0] || 'Varun Board');
                         }
                       }}
                       className="sr-only peer"
@@ -1162,378 +1188,420 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
                 </div>
               </div>
 
-              {/* AVAILABLE IN-HOUSE STOCK LOT SELECTOR */}
-              {isExistingStock && (
-                <div className="p-3.5 rounded-xl bg-emerald-950/30 border border-emerald-500/40 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-emerald-300 flex items-center gap-1.5">
-                      <PackageCheck className="w-4 h-4 text-emerald-400" />
-                      <span>Select Available In-House Stock Lot</span>
-                    </span>
-                    {availableExistingStock.length > 0 && (
-                      <span className="text-[10px] font-mono text-emerald-300 bg-emerald-950 px-2 py-0.5 rounded border border-emerald-700/60 font-semibold">
-                        {availableExistingStock.length} lot(s) in plant
-                      </span>
-                    )}
+              {/* 1. STOCK TYPE */}
+              {isExistingStock ? (
+                /* EXISTING STOCK MODE: Select Stock Type from warehouse stock */
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-xs font-semibold text-slate-200">
+                      Select Stock Type <span className="text-emerald-400">*</span>
+                    </label>
                   </div>
 
-                  {availableExistingStock.length > 0 ? (
-                    <div className="space-y-1.5 pt-1">
-                      <p className="text-[11px] text-slate-300">
-                        Select an available stock type below. The <strong>Board Size</strong> and <strong>Receiving From</strong> will appear automatically:
+                  {inStockStockTypes.length > 0 ? (
+                    <select
+                      value={stockType}
+                      onChange={(e) => handleSelectExistingStockType(e.target.value)}
+                      className="w-full px-3.5 py-2.5 bg-slate-950 border border-emerald-500/50 rounded-xl text-xs text-white focus:outline-none focus:border-emerald-400 cursor-pointer font-medium"
+                    >
+                      <option value="">-- Select Stock Type --</option>
+                      {inStockStockTypes.map((t) => (
+                        <option key={t} value={t}>
+                          {t}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-800 text-xs text-slate-400 space-y-1">
+                      <p className="text-amber-400 font-semibold">No stock types found in warehouse.</p>
+                      <p className="text-[11px] text-slate-500">
+                        Uncheck "Use Existing Stock for Job" above to order new stock from suppliers.
                       </p>
-                      <div className="max-h-48 overflow-y-auto space-y-1.5 pr-1">
-                        {availableExistingStock.map((exist) => {
-                          const isSelected = stockType === exist.stockType && jobSize === (exist.jobSize || '');
-                          return (
+                    </div>
+                  )}
+                </div>
+              ) : (
+                /* NEW ORDER MODE: Search, Select, and Type/Save Stock Type */
+                <div className="relative">
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="block text-xs font-semibold text-slate-200">
+                      Stock Type <span className="text-amber-400">*</span>
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsAddingNewStockType(!isAddingNewStockType);
+                        setIsStockDropdownOpen(false);
+                      }}
+                      className="text-[11px] text-amber-400 hover:text-amber-300 font-medium flex items-center gap-1 cursor-pointer"
+                    >
+                      <Plus className="w-3 h-3" />
+                      <span>{isAddingNewStockType ? 'Select from list' : '+ Add Stock Type'}</span>
+                    </button>
+                  </div>
+
+                  {isAddingNewStockType && (
+                    <div className="p-3 bg-slate-950 border border-amber-500/40 rounded-xl space-y-2 mb-2">
+                      <span className="text-[11px] text-amber-400 font-medium">New Stock Type:</span>
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          value={newStockTypeInput}
+                          onChange={(e) => setNewStockTypeInput(e.target.value)}
+                          placeholder="e.g. 230 GSM Semi-Chemical Kraft Liner..."
+                          autoFocus
+                          className="flex-1 px-3 py-1.5 bg-slate-900 border border-slate-800 rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500"
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              handleSaveStockType();
+                            }
+                          }}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => handleSaveStockType()}
+                          className="px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-semibold rounded-lg transition-colors cursor-pointer"
+                        >
+                          Save & Select
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  <div
+                    onClick={() => setIsStockDropdownOpen(!isStockDropdownOpen)}
+                    className={`w-full px-3.5 py-2.5 bg-slate-950 border rounded-xl text-sm flex items-center justify-between cursor-pointer transition-colors ${
+                      isStockDropdownOpen ? 'border-amber-500' : 'border-slate-800 hover:border-slate-700'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2 truncate">
+                      <Tag className="w-4 h-4 text-amber-400 shrink-0" />
+                      <span className={stockType ? 'text-slate-100 font-medium' : 'text-slate-500'}>
+                        {stockType || 'Search and select stock type...'}
+                      </span>
+                    </div>
+                    <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform ${isStockDropdownOpen ? 'rotate-180' : ''}`} />
+                  </div>
+
+                  {isStockDropdownOpen && (
+                    <div className="absolute left-0 right-0 top-full mt-1.5 z-30 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl overflow-hidden p-2">
+                      <div className="relative mb-2">
+                        <Search className="w-3.5 h-3.5 text-slate-500 absolute left-3 top-2.5" />
+                        <input
+                          type="text"
+                          value={stockSearch}
+                          onChange={(e) => setStockSearch(e.target.value)}
+                          placeholder="Search stock types (e.g. Kraft, Fluting, White Top)..."
+                          autoFocus
+                          className="w-full pl-8 pr-3 py-1.5 bg-slate-950 border border-slate-800 rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500"
+                        />
+                      </div>
+
+                      <div className="max-h-44 overflow-y-auto space-y-1">
+                        <div className="px-2 py-1 text-[10px] font-mono text-slate-400 uppercase tracking-wider flex items-center justify-between border-b border-slate-800 mb-1">
+                          <span>Saved Stock Types ({filteredStockTypes.length})</span>
+                          {stockSearch && <span>Filter: "{stockSearch}"</span>}
+                        </div>
+
+                        {filteredStockTypes.length > 0 ? (
+                          filteredStockTypes.map((type) => (
                             <div
-                              key={exist.id}
-                              onClick={() => handleSelectExistingStockItem(exist)}
-                              className={`p-2.5 rounded-xl border text-xs cursor-pointer transition-all flex items-center justify-between gap-2.5 ${
-                                isSelected
-                                  ? 'bg-emerald-500/25 border-emerald-400 text-white shadow-md shadow-emerald-500/10 ring-1 ring-emerald-500/50'
-                                  : 'bg-slate-900/90 border-slate-700 hover:border-emerald-500/50 text-slate-200 hover:bg-slate-850'
+                              key={type}
+                              className={`px-3 py-2 text-xs rounded-lg flex items-center justify-between cursor-pointer transition-colors group ${
+                                stockType === type
+                                  ? 'bg-amber-500/10 text-amber-300 font-semibold border border-amber-500/30'
+                                  : 'text-slate-300 hover:bg-slate-800 hover:text-white'
                               }`}
                             >
-                              <div className="min-w-0 flex-1">
-                                <div className="font-bold flex items-center gap-1.5 truncate text-white">
-                                  <span className="truncate">{exist.stockType}</span>
-                                  {isSelected && <Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" />}
-                                </div>
-                                <div className="flex flex-wrap items-center gap-2 text-[10px] font-mono text-slate-400 mt-1">
-                                  <span className="text-amber-300 font-semibold">Board Size: {exist.jobSize || 'Standard'}</span>
-                                  <span>•</span>
-                                  <span className="text-sky-300">From: {exist.receivingFrom || 'Plant Warehouse'}</span>
-                                  <span>•</span>
-                                  <span className="text-emerald-400 font-bold">In Stock: {Number(exist.quantity || 0).toLocaleString()} units</span>
-                                </div>
-                              </div>
-                              <span
-                                className={`px-2.5 py-1 rounded-lg text-[10px] font-bold shrink-0 transition-colors ${
-                                  isSelected
-                                    ? 'bg-emerald-500 text-slate-950 shadow-xs'
-                                    : 'bg-slate-800 text-emerald-300 border border-emerald-800 hover:bg-emerald-950'
-                                }`}
+                              <div 
+                                onClick={() => handleSelectStockType(type)}
+                                className="flex-1 flex items-center gap-2 truncate"
                               >
-                                {isSelected ? '✓ Selected' : 'Select Lot'}
-                              </span>
+                                <span className="truncate">{type}</span>
+                                {stockType === type && <Check className="w-3.5 h-3.5 text-amber-400 shrink-0" />}
+                              </div>
+
+                              {onDeleteStockType && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setDeleteConfirmTarget({
+                                      category: 'stock_type',
+                                      idOrName: type,
+                                      label: type,
+                                    });
+                                  }}
+                                  className="p-1 text-slate-500 hover:text-rose-400 hover:bg-slate-700/50 rounded transition-colors opacity-70 group-hover:opacity-100 ml-2"
+                                  title={`Delete saved stock type "${type}"`}
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
                             </div>
+                          ))
+                        ) : (
+                          <div className="p-4 text-center text-xs text-slate-400">
+                            <span>No saved stock types match "{stockSearch}".</span>
+                            <p className="text-[11px] text-slate-500 mt-1">
+                              Only saved items are shown in search.
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* 2. BOARD SIZE (Select from available sizes, NOT typed, when using existing stock) */}
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="block text-xs font-semibold text-slate-200">
+                    {isExistingStock ? 'Available Board Size' : 'Board Size'} <span className={isExistingStock ? 'text-emerald-400' : 'text-amber-400'}>*</span>
+                  </label>
+                  {isExistingStock && (
+                    <span className="text-[10px] text-emerald-400 font-mono flex items-center gap-1 font-semibold bg-emerald-950/70 px-2 py-0.5 rounded border border-emerald-800/60">
+                      <Sparkles className="w-3 h-3 text-emerald-400" />
+                      <span>Select Size (No typing)</span>
+                    </span>
+                  )}
+                </div>
+
+                {isExistingStock ? (
+                  !stockType ? (
+                    <div className="p-3.5 bg-slate-950 border border-slate-800 rounded-xl text-xs text-slate-400 flex items-center gap-2">
+                      <Maximize2 className="w-4 h-4 text-slate-500 shrink-0" />
+                      <span>Please select a Stock Type above first to choose an available size.</span>
+                    </div>
+                  ) : availableSizesForSelectedStockType.length > 0 ? (
+                    <div className="space-y-2">
+                      <select
+                        value={jobSize}
+                        onChange={(e) => handleSelectExistingSize(e.target.value)}
+                        className="w-full px-3.5 py-2.5 bg-slate-950 border border-emerald-500/60 rounded-xl text-xs text-emerald-200 font-mono font-bold focus:outline-none focus:border-emerald-400 cursor-pointer"
+                      >
+                        <option value="">-- Select Available Size --</option>
+                        {availableSizesForSelectedStockType.map((size) => (
+                          <option key={size} value={size}>
+                            {size}
+                          </option>
+                        ))}
+                      </select>
+
+                      {/* Selectable size buttons (No typing) */}
+                      <div className="flex flex-wrap gap-1.5 pt-0.5">
+                        {availableSizesForSelectedStockType.map((size) => {
+                          const isSelected = (jobSize || '').trim() === size.trim();
+                          return (
+                            <button
+                              type="button"
+                              key={size}
+                              onClick={() => handleSelectExistingSize(size)}
+                              className={`px-3 py-1.5 rounded-lg text-xs font-mono font-semibold transition-all cursor-pointer flex items-center gap-1.5 ${
+                                isSelected
+                                  ? 'bg-emerald-500 text-slate-950 shadow-sm'
+                                  : 'bg-slate-900 border border-slate-800 text-slate-300 hover:border-emerald-500/50 hover:text-white'
+                              }`}
+                            >
+                              <span>{size}</span>
+                              {isSelected && <Check className="w-3.5 h-3.5" />}
+                            </button>
                           );
                         })}
                       </div>
                     </div>
                   ) : (
-                    <div className="p-3 rounded-lg bg-slate-900/60 border border-slate-800 text-xs text-slate-400 space-y-1">
-                      <p className="text-slate-200 font-medium">No recorded warehouse lots currently in database.</p>
-                      <p className="text-[11px] text-slate-500">
-                        Choose any stock type below, and <strong>Board Size</strong> and <strong>Receiving From</strong> will automatically appear as in-house stock.
-                      </p>
+                    <div className="p-3.5 bg-slate-950 border border-amber-900/40 rounded-xl text-xs text-amber-300 flex items-center gap-2">
+                      <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
+                      <span>No recorded board sizes for "{stockType}" in warehouse.</span>
                     </div>
-                  )}
-                </div>
-              )}
-
-              {/* 1. STOCK TYPE (Search, Select, and Type/Save) */}
-          <div className="relative">
-            <div className="flex items-center justify-between mb-1.5">
-              <label className="block text-xs font-semibold text-slate-200">
-                Stock Type <span className="text-amber-400">*</span>
-              </label>
-              <button
-                type="button"
-                onClick={() => {
-                  setIsAddingNewStockType(!isAddingNewStockType);
-                  setIsStockDropdownOpen(false);
-                }}
-                className="text-[11px] text-amber-400 hover:text-amber-300 font-medium flex items-center gap-1 cursor-pointer"
-              >
-                <Plus className="w-3 h-3" />
-                <span>{isAddingNewStockType ? 'Select from list' : '+ Add Stock Type'}</span>
-              </button>
-            </div>
-
-            {isAddingNewStockType && (
-              <div className="p-3 bg-slate-950 border border-amber-500/40 rounded-xl space-y-2 mb-2">
-                <span className="text-[11px] text-amber-400 font-medium">New Stock Type:</span>
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    value={newStockTypeInput}
-                    onChange={(e) => setNewStockTypeInput(e.target.value)}
-                    placeholder="e.g. 230 GSM Semi-Chemical Kraft Liner..."
-                    autoFocus
-                    className="flex-1 px-3 py-1.5 bg-slate-900 border border-slate-800 rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500"
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        e.preventDefault();
-                        handleSaveStockType();
-                      }
-                    }}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => handleSaveStockType()}
-                    className="px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-semibold rounded-lg transition-colors cursor-pointer"
-                  >
-                    Save & Select
-                  </button>
-                </div>
-              </div>
-            )}
-
-            <div
-              onClick={() => setIsStockDropdownOpen(!isStockDropdownOpen)}
-              className={`w-full px-3.5 py-2.5 bg-slate-950 border rounded-xl text-sm flex items-center justify-between cursor-pointer transition-colors ${
-                isStockDropdownOpen ? 'border-amber-500' : 'border-slate-800 hover:border-slate-700'
-              }`}
-            >
-              <div className="flex items-center gap-2 truncate">
-                <Tag className="w-4 h-4 text-amber-400 shrink-0" />
-                <span className={stockType ? 'text-slate-100 font-medium' : 'text-slate-500'}>
-                  {stockType || 'Search and select stock type...'}
-                </span>
-              </div>
-              <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform ${isStockDropdownOpen ? 'rotate-180' : ''}`} />
-            </div>
-
-            {isStockDropdownOpen && (
-              <div className="absolute left-0 right-0 top-full mt-1.5 z-30 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl overflow-hidden p-2">
-                <div className="relative mb-2">
-                  <Search className="w-3.5 h-3.5 text-slate-500 absolute left-3 top-2.5" />
-                  <input
-                    type="text"
-                    value={stockSearch}
-                    onChange={(e) => setStockSearch(e.target.value)}
-                    placeholder="Search stock types (e.g. Kraft, Fluting, White Top)..."
-                    autoFocus
-                    className="w-full pl-8 pr-3 py-1.5 bg-slate-950 border border-slate-800 rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500"
-                  />
-                </div>
-
-                <div className="max-h-44 overflow-y-auto space-y-1">
-                  <div className="px-2 py-1 text-[10px] font-mono text-slate-400 uppercase tracking-wider flex items-center justify-between border-b border-slate-800 mb-1">
-                    <span>Saved Stock Types ({filteredStockTypes.length})</span>
-                    {stockSearch && <span>Filter: "{stockSearch}"</span>}
+                  )
+                ) : (
+                  /* Standard New Order Board Size Input */
+                  <div className="relative">
+                    <Maximize2 className="w-4 h-4 text-slate-500 absolute left-3 top-2.5" />
+                    <input
+                      type="text"
+                      required
+                      value={jobSize}
+                      onChange={(e) => setJobSize(e.target.value)}
+                      placeholder="e.g. 1200 x 850 mm or Deckle 1600mm x Cut 950mm"
+                      className="w-full pl-9 pr-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500 font-mono"
+                    />
                   </div>
-
-                  {filteredStockTypes.length > 0 ? (
-                    filteredStockTypes.map((type) => (
-                      <div
-                        key={type}
-                        className={`px-3 py-2 text-xs rounded-lg flex items-center justify-between cursor-pointer transition-colors group ${
-                          stockType === type
-                            ? 'bg-amber-500/10 text-amber-300 font-semibold border border-amber-500/30'
-                            : 'text-slate-300 hover:bg-slate-800 hover:text-white'
-                        }`}
-                      >
-                        <div 
-                          onClick={() => handleSelectStockType(type)}
-                          className="flex-1 flex items-center gap-2 truncate"
-                        >
-                          <span className="truncate">{type}</span>
-                          {stockType === type && <Check className="w-3.5 h-3.5 text-amber-400 shrink-0" />}
-                        </div>
-
-                        {onDeleteStockType && (
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setDeleteConfirmTarget({
-                                category: 'stock_type',
-                                idOrName: type,
-                                label: type,
-                              });
-                            }}
-                            className="p-1 text-slate-500 hover:text-rose-400 hover:bg-slate-700/50 rounded transition-colors opacity-70 group-hover:opacity-100 ml-2"
-                            title={`Delete saved stock type "${type}"`}
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        )}
-                      </div>
-                    ))
-                  ) : (
-                    <div className="p-4 text-center text-xs text-slate-400">
-                      <span>No saved stock types match "{stockSearch}".</span>
-                      <p className="text-[11px] text-slate-500 mt-1">
-                        Only saved items are shown in search.
-                      </p>
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* 2. BOARD SIZE */}
-          <div>
-            <div className="flex items-center justify-between mb-1.5">
-              <label className="block text-xs font-semibold text-slate-200">
-                Board Size <span className="text-amber-400">*</span>
-              </label>
-              {isExistingStock && (
-                <span className="text-[10px] text-emerald-400 font-mono flex items-center gap-1 font-semibold bg-emerald-950/70 px-2 py-0.5 rounded border border-emerald-800/60">
-                  <Sparkles className="w-3 h-3 text-emerald-400" />
-                  <span>Auto-filled from Existing Stock</span>
-                </span>
-              )}
-            </div>
-            <div className="relative">
-              <Maximize2 className="w-4 h-4 text-slate-500 absolute left-3 top-2.5" />
-              <input
-                type="text"
-                required
-                value={jobSize}
-                onChange={(e) => setJobSize(e.target.value)}
-                placeholder="e.g. 1200 x 850 mm or Deckle 1600mm x Cut 950mm"
-                className={`w-full pl-9 pr-3 py-2 bg-slate-950 border rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500 font-mono ${
-                  isExistingStock ? 'border-emerald-500/50 text-emerald-200' : 'border-slate-800'
-                }`}
-              />
-            </div>
-          </div>
-
-          {/* 3. RECEIVING FROM (Search & Save as requested) */}
-          <div className="relative">
-            <div className="flex items-center justify-between mb-1.5">
-              <div className="flex items-center gap-2">
-                <label className="block text-xs font-semibold text-slate-200">
-                  Receiving From <span className="text-amber-400">*</span>
-                </label>
-                {isExistingStock && (
-                  <span className="text-[10px] text-emerald-400 font-mono flex items-center gap-1 font-semibold bg-emerald-950/70 px-2 py-0.5 rounded border border-emerald-800/60">
-                    <Sparkles className="w-3 h-3 text-emerald-400" />
-                    <span>Auto-filled</span>
-                  </span>
                 )}
               </div>
-              <button
-                type="button"
-                onClick={() => {
-                  setIsAddingNewSupplier(!isAddingNewSupplier);
-                  setIsSupplierDropdownOpen(false);
-                }}
-                className="text-[11px] text-amber-400 hover:text-amber-300 font-medium flex items-center gap-1 cursor-pointer"
-              >
-                <Plus className="w-3 h-3" />
-                <span>{isAddingNewSupplier ? 'Select existing' : '+ Add Supplier'}</span>
-              </button>
-            </div>
 
-            {isAddingNewSupplier && (
-              <div className="p-3 bg-slate-950 border border-amber-500/40 rounded-xl space-y-2 mb-2">
-                <span className="text-[11px] text-amber-400 font-medium">New Supplier:</span>
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    value={newSupplierInput}
-                    onChange={(e) => setNewSupplierInput(e.target.value)}
-                    placeholder="e.g. Smurfit Kappa Mill Bay 4, Georgia-Pacific..."
-                    autoFocus
-                    className="flex-1 px-3 py-1.5 bg-slate-900 border border-slate-800 rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500"
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        e.preventDefault();
-                        handleSaveSupplier();
-                      }
-                    }}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => handleSaveSupplier()}
-                    className="px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-semibold rounded-lg transition-colors cursor-pointer"
-                  >
-                    Save & Select
-                  </button>
+              {/* 3. RECEIVING FROM (Auto-filled as size is selected when using existing stock) */}
+              {isExistingStock ? (
+                <div>
+                  <label className="block text-xs font-semibold text-slate-200 mb-1.5">
+                    Receiving From <span className="text-emerald-400">*</span>
+                  </label>
+                  <div className={`p-3.5 bg-slate-950 border rounded-xl flex items-center justify-between gap-3 ${
+                    receivingFrom ? 'border-emerald-500/40' : 'border-slate-800'
+                  }`}>
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
+                        receivingFrom
+                          ? 'bg-emerald-500/10 border border-emerald-500/30 text-emerald-400'
+                          : 'bg-slate-900 border border-slate-800 text-slate-500'
+                      }`}>
+                        <Truck className="w-4 h-4" />
+                      </div>
+                      <div className="min-w-0">
+                        <span className="text-[10px] font-mono text-slate-400 uppercase tracking-wide">
+                          Receiving Source:
+                        </span>
+                        <div className="text-xs font-bold text-white truncate mt-0.5">
+                          {receivingFrom || (jobSize ? 'Plant Warehouse (In-House Stock)' : 'Will auto-fill once size is selected')}
+                        </div>
+                      </div>
+                    </div>
+                    {receivingFrom && (
+                      <span className="text-[10px] font-mono text-emerald-400 bg-emerald-950 px-2.5 py-1 rounded-lg border border-emerald-700/60 font-semibold flex items-center gap-1.5 shrink-0">
+                        <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
+                        <span>Auto-filled</span>
+                      </span>
+                    )}
+                  </div>
                 </div>
-              </div>
-            )}
-
-            <div
-              onClick={() => setIsSupplierDropdownOpen(!isSupplierDropdownOpen)}
-              className={`w-full px-3.5 py-2.5 bg-slate-950 border rounded-xl text-sm flex items-center justify-between cursor-pointer transition-colors ${
-                isSupplierDropdownOpen ? 'border-amber-500' : 'border-slate-800 hover:border-slate-700'
-              }`}
-            >
-              <div className="flex items-center gap-2 truncate">
-                <Truck className="w-4 h-4 text-slate-400 shrink-0" />
-                <span className={receivingFrom ? 'text-slate-100 font-medium' : 'text-slate-500'}>
-                  {receivingFrom || 'Search and select receiving supplier...'}
-                </span>
-              </div>
-              <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform ${isSupplierDropdownOpen ? 'rotate-180' : ''}`} />
-            </div>
-
-            {isSupplierDropdownOpen && (
-              <div className="absolute left-0 right-0 top-full mt-1.5 z-30 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl overflow-hidden p-2">
-                <div className="relative mb-2">
-                  <Search className="w-3.5 h-3.5 text-slate-500 absolute left-3 top-2.5" />
-                  <input
-                    type="text"
-                    value={supplierSearch}
-                    onChange={(e) => setSupplierSearch(e.target.value)}
-                    placeholder="Search receiving vendors..."
-                    autoFocus
-                    className="w-full pl-8 pr-3 py-1.5 bg-slate-950 border border-slate-800 rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500"
-                  />
-                </div>
-
-                <div className="max-h-44 overflow-y-auto space-y-1">
-                  <div className="px-2 py-1 text-[10px] font-mono text-slate-400 uppercase tracking-wider flex items-center justify-between border-b border-slate-800 mb-1">
-                    <span>Saved Suppliers ({filteredSuppliers.length})</span>
-                    {supplierSearch && <span>Filter: "{supplierSearch}"</span>}
+              ) : (
+                /* Standard New Order Supplier Selection */
+                <div className="relative">
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="block text-xs font-semibold text-slate-200">
+                      Receiving From <span className="text-amber-400">*</span>
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsAddingNewSupplier(!isAddingNewSupplier);
+                        setIsSupplierDropdownOpen(false);
+                      }}
+                      className="text-[11px] text-amber-400 hover:text-amber-300 font-medium flex items-center gap-1 cursor-pointer"
+                    >
+                      <Plus className="w-3 h-3" />
+                      <span>{isAddingNewSupplier ? 'Select existing' : '+ Add Supplier'}</span>
+                    </button>
                   </div>
 
-                  {filteredSuppliers.length > 0 ? (
-                    filteredSuppliers.map((supp) => (
-                      <div
-                        key={supp}
-                        className={`px-3 py-2 text-xs rounded-lg flex items-center justify-between cursor-pointer transition-colors group ${
-                          receivingFrom === supp
-                            ? 'bg-amber-500/10 text-amber-300 font-semibold border border-amber-500/30'
-                            : 'text-slate-300 hover:bg-slate-800 hover:text-white'
-                        }`}
-                      >
-                        <div 
-                          onClick={() => handleSelectSupplier(supp)}
-                          className="flex-1 flex items-center gap-2 truncate"
+                  {isAddingNewSupplier && (
+                    <div className="p-3 bg-slate-950 border border-amber-500/40 rounded-xl space-y-2 mb-2">
+                      <span className="text-[11px] text-amber-400 font-medium">New Supplier:</span>
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          value={newSupplierInput}
+                          onChange={(e) => setNewSupplierInput(e.target.value)}
+                          placeholder="e.g. Smurfit Kappa Mill Bay 4, Georgia-Pacific..."
+                          autoFocus
+                          className="flex-1 px-3 py-1.5 bg-slate-900 border border-slate-800 rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500"
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              handleSaveSupplier();
+                            }
+                          }}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => handleSaveSupplier()}
+                          className="px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-semibold rounded-lg transition-colors cursor-pointer"
                         >
-                          <span className="truncate">{supp}</span>
-                          {receivingFrom === supp && <Check className="w-3.5 h-3.5 text-amber-400 shrink-0" />}
+                          Save & Select
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  <div
+                    onClick={() => setIsSupplierDropdownOpen(!isSupplierDropdownOpen)}
+                    className={`w-full px-3.5 py-2.5 bg-slate-950 border rounded-xl text-sm flex items-center justify-between cursor-pointer transition-colors ${
+                      isSupplierDropdownOpen ? 'border-amber-500' : 'border-slate-800 hover:border-slate-700'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2 truncate">
+                      <Truck className="w-4 h-4 text-slate-400 shrink-0" />
+                      <span className={receivingFrom ? 'text-slate-100 font-medium' : 'text-slate-500'}>
+                        {receivingFrom || 'Search and select receiving supplier...'}
+                      </span>
+                    </div>
+                    <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform ${isSupplierDropdownOpen ? 'rotate-180' : ''}`} />
+                  </div>
+
+                  {isSupplierDropdownOpen && (
+                    <div className="absolute left-0 right-0 top-full mt-1.5 z-30 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl overflow-hidden p-2">
+                      <div className="relative mb-2">
+                        <Search className="w-3.5 h-3.5 text-slate-500 absolute left-3 top-2.5" />
+                        <input
+                          type="text"
+                          value={supplierSearch}
+                          onChange={(e) => setSupplierSearch(e.target.value)}
+                          placeholder="Search receiving vendors..."
+                          autoFocus
+                          className="w-full pl-8 pr-3 py-1.5 bg-slate-950 border border-slate-800 rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500"
+                        />
+                      </div>
+
+                      <div className="max-h-44 overflow-y-auto space-y-1">
+                        <div className="px-2 py-1 text-[10px] font-mono text-slate-400 uppercase tracking-wider flex items-center justify-between border-b border-slate-800 mb-1">
+                          <span>Saved Suppliers ({filteredSuppliers.length})</span>
+                          {supplierSearch && <span>Filter: "{supplierSearch}"</span>}
                         </div>
 
-                        {onDeleteSupplier && (
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setDeleteConfirmTarget({
-                                category: 'supplier',
-                                idOrName: supp,
-                                label: supp,
-                              });
-                            }}
-                            className="p-1 text-slate-500 hover:text-rose-400 hover:bg-slate-700/50 rounded transition-colors opacity-70 group-hover:opacity-100 ml-2"
-                            title={`Delete saved supplier "${supp}"`}
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
+                        {filteredSuppliers.length > 0 ? (
+                          filteredSuppliers.map((supp) => (
+                            <div
+                              key={supp}
+                              className={`px-3 py-2 text-xs rounded-lg flex items-center justify-between cursor-pointer transition-colors group ${
+                                receivingFrom === supp
+                                  ? 'bg-amber-500/10 text-amber-300 font-semibold border border-amber-500/30'
+                                  : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+                              }`}
+                            >
+                              <div 
+                                onClick={() => handleSelectSupplier(supp)}
+                                className="flex-1 flex items-center gap-2 truncate"
+                              >
+                                <span className="truncate">{supp}</span>
+                                {receivingFrom === supp && <Check className="w-3.5 h-3.5 text-amber-400 shrink-0" />}
+                              </div>
+
+                              {onDeleteSupplier && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setDeleteConfirmTarget({
+                                      category: 'supplier',
+                                      idOrName: supp,
+                                      label: supp,
+                                    });
+                                  }}
+                                  className="p-1 text-slate-500 hover:text-rose-400 hover:bg-slate-700/50 rounded transition-colors opacity-70 group-hover:opacity-100 ml-2"
+                                  title={`Delete saved supplier "${supp}"`}
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                            </div>
+                          ))
+                        ) : (
+                          <div className="p-4 text-center text-xs text-slate-400">
+                            <span>No saved suppliers match "{supplierSearch}".</span>
+                            <p className="text-[11px] text-slate-500 mt-1">
+                              Only saved items are shown in search.
+                            </p>
+                          </div>
                         )}
                       </div>
-                    ))
-                  ) : (
-                    <div className="p-4 text-center text-xs text-slate-400">
-                      <span>No saved suppliers match "{supplierSearch}".</span>
-                      <p className="text-[11px] text-slate-500 mt-1">
-                        Only saved items are shown in search.
-                      </p>
                     </div>
                   )}
                 </div>
-              </div>
-            )}
-          </div>
+              )}
 
           {/* 4. PRINTED OR NON-PRINTED & 5. PRESS NAME (Search & Save) */}
           <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-3">
