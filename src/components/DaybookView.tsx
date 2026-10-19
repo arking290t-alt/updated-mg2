@@ -317,9 +317,9 @@ export const DaybookView: React.FC = () => {
     if (!balancesVisible) {
       openPrompt({
         title: 'Security PIN Required',
-        description: 'Enter your 6-digit Daybook PIN to reveal financial balances:',
+        description: 'Enter your 6-digit Daybook security PIN to reveal balances:',
         isPassword: true,
-        placeholder: 'Enter PIN (e.g. 816400)',
+        placeholder: 'Enter 6-digit PIN',
         onConfirm: (val) => {
           if (val === BALANCE_PIN) {
             setBalancesVisible(true);
@@ -1504,6 +1504,9 @@ export const DaybookView: React.FC = () => {
               <input
                 type={promptModal.isPassword ? 'password' : 'text'}
                 autoFocus
+                autoComplete="off"
+                autoCorrect="off"
+                spellCheck="false"
                 placeholder={promptModal.placeholder || 'Enter value...'}
                 value={promptInputValue}
                 onChange={(e) => {

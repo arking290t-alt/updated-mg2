@@ -16,6 +16,7 @@ import {
   CorrugationJob, 
   InventoryItem, 
   JobStatus,
+  JobProcessStep,
   INITIAL_STOCK_TYPES, 
   COMMON_SUPPLIERS, 
   INITIAL_PRESS_NAMES,
@@ -312,7 +313,16 @@ export function subscribeToJobs(
           pressStatus: data.pressStatus || undefined,
           isPrinted: data.isPrinted !== undefined ? Boolean(data.isPrinted) : undefined,
           pressPhotoUrl: data.pressPhotoUrl || undefined,
-          processes: Array.isArray(data.processes) ? data.processes : undefined,
+          processes: Array.isArray(data.processes)
+            ? data.processes.map((p: any, idx: number) => ({
+                id: String(p.id || `proc-${idx}`),
+                name: String(p.name || 'Process'),
+                completed: Boolean(p.completed),
+                completedDate: p.completedDate ? String(p.completedDate) : undefined,
+                notes: p.notes ? String(p.notes) : undefined,
+                sequence: typeof p.sequence === 'number' ? p.sequence : idx + 1,
+              }))
+            : undefined,
           completedAt: data.completedAt || undefined,
           pressCompletedAt: data.pressCompletedAt || undefined,
         });
@@ -332,7 +342,13 @@ export function subscribeToJobs(
       // Then overwrite or add items from Firestore
       firestoreItems.forEach((job) => {
         if (!deletedIds.has(job.id)) {
-          mergedMap.set(job.id, job);
+          const local = mergedMap.get(job.id);
+          // If local has processes but Firestore hasn't caught up, preserve them
+          if (local && (!job.processes || job.processes.length === 0) && local.processes && local.processes.length > 0) {
+            mergedMap.set(job.id, { ...job, processes: local.processes });
+          } else {
+            mergedMap.set(job.id, job);
+          }
         }
       });
 
@@ -354,6 +370,45 @@ export function subscribeToJobs(
   return unsubscribe;
 }
 
+// Helper to deep clean data before passing to Firestore (Firestore rejects any `undefined` values)
+export function cleanFirestoreData<T>(data: T): T {
+  if (data === undefined) {
+    return null as unknown as T;
+  }
+  if (data === null) {
+    return null as unknown as T;
+  }
+  if (Array.isArray(data)) {
+    return data.map((item) => cleanFirestoreData(item)) as unknown as T;
+  }
+  if (typeof data === 'object' && data !== null) {
+    const cleaned: Record<string, any> = {};
+    for (const [key, value] of Object.entries(data)) {
+      if (value !== undefined) {
+        cleaned[key] = cleanFirestoreData(value);
+      }
+    }
+    return cleaned as T;
+  }
+  return data;
+}
+
+export function sanitizeJobProcessStep(step: any, index: number = 0): JobProcessStep {
+  const cleanStep: JobProcessStep = {
+    id: String(step.id || `proc_${Date.now()}_${index}`),
+    name: String(step.name || `Process ${index + 1}`),
+    completed: Boolean(step.completed),
+    sequence: typeof step.sequence === 'number' ? step.sequence : index + 1,
+  };
+  if (step.completed && step.completedDate) {
+    cleanStep.completedDate = String(step.completedDate);
+  }
+  if (step.notes) {
+    cleanStep.notes = String(step.notes);
+  }
+  return cleanStep;
+}
+
 export async function addJobToFirestore(job: CorrugationJob): Promise<void> {
   // 1. Remove ID from deleted tombstones if it was ever there
   const deletedIds = getDeletedJobIds();
@@ -362,33 +417,45 @@ export async function addJobToFirestore(job: CorrugationJob): Promise<void> {
     localStorage.setItem(MG_DELETED_JOBS_KEY, JSON.stringify(Array.from(deletedIds)));
   }
 
+  // Sanitize processes if present
+  const cleanProcesses = Array.isArray(job.processes)
+    ? job.processes.map((p, idx) => sanitizeJobProcessStep(p, idx))
+    : null;
+
+  const sanitizedJob: CorrugationJob = {
+    ...job,
+    processes: cleanProcesses || undefined,
+  };
+
   // 2. Immediately save to local persistent storage
   const currentJobs = getPersistedJobs();
-  const updatedJobs = [job, ...currentJobs.filter((j) => j.id !== job.id)];
+  const updatedJobs = [sanitizedJob, ...currentJobs.filter((j) => j.id !== job.id)];
   savePersistedJobs(updatedJobs);
 
   // 3. Sync to Firestore
   try {
-    await setDoc(doc(db, JOBS_COLLECTION, job.id), {
-      jobName: job.jobName,
-      jobType: job.jobType,
-      jobPlacement: job.jobPlacement,
-      createdAt: job.createdAt,
-      status: job.status,
-      notes: job.notes || '',
-      hasInventory: Boolean(job.hasInventory),
-      inventoryCount: job.inventoryCount || 0,
-      inventoryOrderId: job.inventoryOrderId || null,
-      boardSize: job.boardSize || null,
-      jobSize: job.jobSize || null,
-      pressName: job.pressName || null,
-      isUrgent: Boolean(job.isUrgent),
-      pressStatus: job.pressStatus || 'Pending',
-      isPrinted: job.isPrinted !== undefined ? job.isPrinted : null,
-      pressPhotoUrl: job.pressPhotoUrl || null,
-      processes: Array.isArray(job.processes) ? job.processes : null,
+    const payload = cleanFirestoreData({
+      jobName: sanitizedJob.jobName,
+      jobType: sanitizedJob.jobType,
+      jobPlacement: sanitizedJob.jobPlacement,
+      createdAt: sanitizedJob.createdAt,
+      status: sanitizedJob.status,
+      notes: sanitizedJob.notes || '',
+      hasInventory: Boolean(sanitizedJob.hasInventory),
+      inventoryCount: sanitizedJob.inventoryCount || 0,
+      inventoryOrderId: sanitizedJob.inventoryOrderId || null,
+      boardSize: sanitizedJob.boardSize || null,
+      jobSize: sanitizedJob.jobSize || null,
+      pressName: sanitizedJob.pressName || null,
+      isUrgent: Boolean(sanitizedJob.isUrgent),
+      pressStatus: sanitizedJob.pressStatus || 'Pending',
+      isPrinted: sanitizedJob.isPrinted !== undefined ? sanitizedJob.isPrinted : null,
+      pressPhotoUrl: sanitizedJob.pressPhotoUrl || null,
+      processes: cleanProcesses,
       updatedAt: new Date().toISOString(),
-    }, { merge: true });
+    });
+
+    await setDoc(doc(db, JOBS_COLLECTION, job.id), payload, { merge: true });
   } catch (err) {
     console.warn(`Firestore setDoc for job ${job.id} failed, but job is saved locally:`, err);
   }
@@ -408,8 +475,10 @@ export async function updateJobStatusInFirestore(jobId: string, status: JobStatu
     };
     if (status === 'Completed' && completedAt) {
       payload.completedAt = completedAt;
+    } else if (status === 'Pending') {
+      payload.completedAt = null;
     }
-    await setDoc(doc(db, JOBS_COLLECTION, jobId), payload, { merge: true });
+    await setDoc(doc(db, JOBS_COLLECTION, jobId), cleanFirestoreData(payload), { merge: true });
   } catch (err) {
     console.warn(`Firestore setDoc for job ${jobId} failed, but status is saved locally:`, err);
   }
@@ -419,17 +488,39 @@ export async function updateJobDetailsInFirestore(
   jobId: string,
   updates: Partial<CorrugationJob>
 ): Promise<void> {
+  // Clean processes if provided
+  let cleanUpdates = { ...updates };
+  if (Array.isArray(updates.processes)) {
+    cleanUpdates.processes = updates.processes.map((p, idx) => sanitizeJobProcessStep(p, idx));
+  }
+
   // 1. Immediately update in local persistent storage
   const currentJobs = getPersistedJobs();
-  const updatedJobs = currentJobs.map((j) => (j.id === jobId ? { ...j, ...updates } : j));
+  const existingJob = currentJobs.find((j) => j.id === jobId);
+  const updatedJobs = currentJobs.map((j) => (j.id === jobId ? { ...j, ...cleanUpdates } : j));
   savePersistedJobs(updatedJobs);
 
   // 2. Sync to Firestore
   try {
-    const payload: any = { ...updates, updatedAt: new Date().toISOString() };
-    await setDoc(doc(db, JOBS_COLLECTION, jobId), payload, { merge: true });
+    const payload: any = {
+      ...cleanUpdates,
+      updatedAt: new Date().toISOString(),
+    };
+
+    // If job document might need base fields to satisfy firestore security rules
+    if (existingJob) {
+      payload.jobName = cleanUpdates.jobName || existingJob.jobName;
+      payload.status = cleanUpdates.status || existingJob.status;
+      payload.jobPlacement = cleanUpdates.jobPlacement || existingJob.jobPlacement;
+      payload.jobType = cleanUpdates.jobType || existingJob.jobType;
+      payload.createdAt = cleanUpdates.createdAt || existingJob.createdAt;
+    }
+
+    const cleanPayload = cleanFirestoreData(payload);
+    await setDoc(doc(db, JOBS_COLLECTION, jobId), cleanPayload, { merge: true });
   } catch (err) {
     console.warn(`Firestore setDoc for job ${jobId} failed, but saved locally:`, err);
+    throw err;
   }
 }
 

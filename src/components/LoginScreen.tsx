@@ -26,21 +26,30 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
 
     setIsLoading(true);
 
-    // ID and Password must both be 'admin' as requested
+    // Support both admin/admin (Master Console) and admin/factory (Factory Floor)
     setTimeout(() => {
-      if (trimmedId.toLowerCase() === 'admin' && trimmedPw === 'admin') {
+      if (trimmedId.toLowerCase() === 'admin' && trimmedPw === 'factory') {
+        setIsLoading(false);
+        onLoginSuccess('factory');
+      } else if (trimmedId.toLowerCase() === 'admin' && trimmedPw === 'admin') {
         setIsLoading(false);
         onLoginSuccess('admin');
       } else {
         setIsLoading(false);
-        setErrorMessage('Authentication failed. Operator ID and Password must both be "admin".');
+        setErrorMessage('Authentication failed. Valid logins: admin / admin (Office Master) or admin / factory (Factory Floor).');
       }
     }, 300);
   };
 
-  const handleQuickFill = () => {
+  const handleFillAdmin = () => {
     setOperatorId('admin');
     setPassword('admin');
+    setErrorMessage('');
+  };
+
+  const handleFillFactory = () => {
+    setOperatorId('admin');
+    setPassword('factory');
     setErrorMessage('');
   };
 
@@ -58,24 +67,36 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
             <Box className="w-6 h-6 stroke-[2.5]" />
           </div>
           <h1 className="text-xl font-bold text-white tracking-tight">Corrugation Plant Operations</h1>
-          <p className="text-xs text-slate-400 mt-1">Corrugated Board & Packaging Manufacturing Console</p>
+          <p className="text-xs text-slate-400 mt-1">Manufacturing & Production Execution Console</p>
         </div>
 
-        {/* Credentials Reminder / Quick Auto Fill */}
-        <div className="mb-5 p-3 rounded-lg bg-slate-950 border border-slate-800 flex items-center justify-between gap-3 text-xs">
-          <div>
-            <span className="text-slate-400">Credentials: </span>
-            <span className="font-mono text-amber-400 font-semibold">admin</span>
-            <span className="text-slate-500 mx-1">/</span>
-            <span className="font-mono text-amber-400 font-semibold">admin</span>
+        {/* Credentials Reminder / Quick Auto Fill Options */}
+        <div className="mb-5 p-3.5 rounded-xl bg-slate-950 border border-slate-800 space-y-2 text-xs">
+          <div className="text-[11px] font-mono text-slate-400 uppercase tracking-wider font-semibold">
+            Select Console Login:
           </div>
-          <button
-            type="button"
-            onClick={handleQuickFill}
-            className="px-2.5 py-1 text-xs font-medium text-slate-900 bg-amber-400 hover:bg-amber-300 rounded transition-colors cursor-pointer"
-          >
-            Auto-Fill
-          </button>
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={handleFillAdmin}
+              className="p-2 rounded-lg bg-slate-900 hover:bg-slate-850 border border-slate-800 hover:border-slate-700 text-left cursor-pointer transition-colors"
+            >
+              <div className="font-bold text-white text-[11px]">Office Master</div>
+              <div className="font-mono text-amber-400 text-[10px] mt-0.5">admin / admin</div>
+            </button>
+
+            <button
+              type="button"
+              onClick={handleFillFactory}
+              className="p-2 rounded-lg bg-slate-900 hover:bg-slate-850 border border-amber-500/40 hover:border-amber-500 text-left cursor-pointer transition-colors shadow-xs"
+            >
+              <div className="font-bold text-white text-[11px] flex items-center gap-1">
+                <span>Factory Floor</span>
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+              </div>
+              <div className="font-mono text-amber-400 text-[10px] mt-0.5">admin / factory</div>
+            </button>
+          </div>
         </div>
 
         {/* Error Alert */}

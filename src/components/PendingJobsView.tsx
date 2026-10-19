@@ -117,19 +117,22 @@ export const PendingJobsView: React.FC<PendingJobsViewProps> = ({
 
     const allDone = updatedSteps.length > 0 && updatedSteps.every((p) => p.completed && Boolean(p.completedDate));
     const nextStatus: JobStatus = allDone ? 'Completed' : job.status;
-    const completedAt = allDone ? formatReceivedTimestamp() : job.completedAt;
 
-    await onUpdateJobDetails(job.id, {
+    const payload: Partial<CorrugationJob> = {
       processes: updatedSteps,
       status: nextStatus,
-      completedAt,
-    });
+    };
+    if (allDone) {
+      payload.completedAt = formatReceivedTimestamp();
+    }
+
+    await onUpdateJobDetails(job.id, payload);
 
     if (processModalJob?.id === job.id) {
-      setProcessModalJob({ ...processModalJob, processes: updatedSteps, status: nextStatus, completedAt });
+      setProcessModalJob({ ...processModalJob, processes: updatedSteps, status: nextStatus, ...(allDone ? { completedAt: payload.completedAt } : {}) });
     }
     if (detailModalJob?.id === job.id) {
-      setDetailModalJob({ ...detailModalJob, processes: updatedSteps, status: nextStatus, completedAt });
+      setDetailModalJob({ ...detailModalJob, processes: updatedSteps, status: nextStatus, ...(allDone ? { completedAt: payload.completedAt } : {}) });
     }
   };
 
@@ -138,25 +141,29 @@ export const PendingJobsView: React.FC<PendingJobsViewProps> = ({
     const currentSteps = job.processes || [];
     const updatedSteps: JobProcessStep[] = currentSteps.map((s) => {
       if (s.id === stepId) {
-        return { ...s, completed: false, completedDate: undefined };
+        const { completedDate, ...rest } = s;
+        return { ...rest, completed: false };
       }
       return s;
     });
 
     const nextStatus: JobStatus = job.status === 'Completed' ? 'Pending' : job.status;
-    const completedAt = nextStatus === 'Pending' ? undefined : job.completedAt;
 
-    await onUpdateJobDetails(job.id, {
+    const payload: Partial<CorrugationJob> = {
       processes: updatedSteps,
       status: nextStatus,
-      completedAt,
-    });
+    };
+    if (job.status === 'Completed') {
+      payload.completedAt = null as any;
+    }
+
+    await onUpdateJobDetails(job.id, payload);
 
     if (processModalJob?.id === job.id) {
-      setProcessModalJob({ ...processModalJob, processes: updatedSteps, status: nextStatus, completedAt });
+      setProcessModalJob({ ...processModalJob, processes: updatedSteps, status: nextStatus });
     }
     if (detailModalJob?.id === job.id) {
-      setDetailModalJob({ ...detailModalJob, processes: updatedSteps, status: nextStatus, completedAt });
+      setDetailModalJob({ ...detailModalJob, processes: updatedSteps, status: nextStatus });
     }
   };
 

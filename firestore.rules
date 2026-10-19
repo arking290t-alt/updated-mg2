@@ -15,10 +15,11 @@ service cloud.firestore {
     // Factory Production Jobs
     match /jobs/{jobId} {
       allow read: if true;
-      allow create, update: if isValidId(jobId) 
+      allow create: if isValidId(jobId) 
         && request.resource.data.jobName is string 
         && request.resource.data.jobName.size() <= 200
         && request.resource.data.status in ['Pending', 'Not Completed', 'Completed'];
+      allow update: if isValidId(jobId);
       allow delete: if isValidId(jobId);
     }
 
@@ -36,6 +37,20 @@ service cloud.firestore {
     match /settings/{settingId} {
       allow read: if true;
       allow write: if isValidId(settingId);
+    }
+
+    // Office Daybook Accounts & Ledger Entries
+    match /accounts/{accountId} {
+      allow read, write: if true;
+    }
+    match /entries/{entryId} {
+      allow read, write: if true;
+    }
+    match /deletedEntries/{entryId} {
+      allow read, write: if true;
+    }
+    match /editedEntries/{entryId} {
+      allow read, write: if true;
     }
   }
 }

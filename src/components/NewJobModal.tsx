@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
-import { X, Plus, Search, Factory, Building2, Check, ChevronDown, Tag, Trash2 } from 'lucide-react';
-import { CorrugationJob, JobPlacement } from '../types/job';
+import { X, Plus, Search, Factory, Building2, Check, ChevronDown, Tag, Trash2, Workflow, Sparkles } from 'lucide-react';
+import { CorrugationJob, JobPlacement, JobProcessStep } from '../types/job';
 
 interface NewJobModalProps {
   isOpen: boolean;
@@ -10,6 +10,19 @@ interface NewJobModalProps {
   onAddNewType: (newType: string) => void;
   onDeleteType?: (type: string) => void;
 }
+
+const DEFAULT_PROCESS_PRESETS = [
+  'Paper Reel Splicing & Loading',
+  'Corrugation / Fluting',
+  'Sheet Slitting & Scoring',
+  'Flexo Printing & Inking',
+  'Die Cutting & Creasing',
+  'Rotary Slotting & Punching',
+  'Folder Gluer / Side Pasting',
+  'Wire Stitching & Binding',
+  'Quality Inspection & Burst Testing',
+  'Bundling & Dispatch',
+];
 
 export const NewJobModal: React.FC<NewJobModalProps> = ({
   isOpen,
@@ -24,6 +37,8 @@ export const NewJobModal: React.FC<NewJobModalProps> = ({
   const [placement, setPlacement] = useState<JobPlacement>('Factory');
   const [notes, setNotes] = useState('');
   const [jobDate, setJobDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [selectedProcesses, setSelectedProcesses] = useState<JobProcessStep[]>([]);
+  const [customProcessInput, setCustomProcessInput] = useState('');
   
   // Job Type Search & Add state
   const [typeSearch, setTypeSearch] = useState('');
@@ -72,6 +87,34 @@ export const NewJobModal: React.FC<NewJobModalProps> = ({
     setTypeSearch('');
   };
 
+  const handleAddProcess = (name: string) => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    if (selectedProcesses.some((p) => p.name.toLowerCase() === trimmed.toLowerCase())) return;
+    const newStep: JobProcessStep = {
+      id: `proc_${Date.now()}_${selectedProcesses.length + 1}`,
+      name: trimmed,
+      completed: false,
+      sequence: selectedProcesses.length + 1,
+    };
+    setSelectedProcesses((prev) => [...prev, newStep]);
+    setCustomProcessInput('');
+  };
+
+  const handleRemoveProcess = (id: string) => {
+    setSelectedProcesses((prev) => prev.filter((p) => p.id !== id));
+  };
+
+  const handleAddStandardPipeline = () => {
+    const standard: JobProcessStep[] = DEFAULT_PROCESS_PRESETS.map((name, idx) => ({
+      id: `proc_${Date.now()}_${idx + 1}`,
+      name,
+      completed: false,
+      sequence: idx + 1,
+    }));
+    setSelectedProcesses(standard);
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!jobName.trim()) {
@@ -89,6 +132,7 @@ export const NewJobModal: React.FC<NewJobModalProps> = ({
       jobPlacement: placement,
       notes: notes.trim() || undefined,
       createdAt: `${jobDate} 12:00`,
+      processes: selectedProcesses.length > 0 ? selectedProcesses : undefined,
     } as any);
 
     // Reset fields
@@ -96,6 +140,8 @@ export const NewJobModal: React.FC<NewJobModalProps> = ({
     setSelectedType('');
     setPlacement('Factory');
     setNotes('');
+    setSelectedProcesses([]);
+    setCustomProcessInput('');
     setErrorMessage('');
     onClose();
   };
@@ -352,6 +398,93 @@ export const NewJobModal: React.FC<NewJobModalProps> = ({
                 </div>
               </button>
             </div>
+          </div>
+
+          {/* Manufacturing Processes Pipeline (Optional) */}
+          <div className="p-3.5 bg-slate-950 border border-slate-800 rounded-xl space-y-3">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-bold text-teal-400 uppercase tracking-wide flex items-center gap-1.5">
+                <Workflow className="w-3.5 h-3.5" />
+                <span>Manufacturing Processes Pipeline ({selectedProcesses.length})</span>
+              </label>
+              <button
+                type="button"
+                onClick={handleAddStandardPipeline}
+                className="text-[11px] font-semibold text-amber-400 hover:text-amber-300 flex items-center gap-1 cursor-pointer"
+              >
+                <Sparkles className="w-3 h-3" />
+                <span>Add Standard Pipeline</span>
+              </button>
+            </div>
+
+            {/* Input to type custom process */}
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={customProcessInput}
+                onChange={(e) => setCustomProcessInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    handleAddProcess(customProcessInput);
+                  }
+                }}
+                placeholder="Type process name (e.g. UV Coating, Box Pasting)..."
+                className="flex-1 px-3 py-1.5 bg-slate-900 border border-slate-800 rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:border-teal-400"
+              />
+              <button
+                type="button"
+                onClick={() => handleAddProcess(customProcessInput)}
+                className="px-3 py-1.5 bg-teal-600 hover:bg-teal-500 text-white rounded-lg text-xs font-bold transition-colors cursor-pointer flex items-center gap-1 shrink-0"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Add Step</span>
+              </button>
+            </div>
+
+            {/* Quick Presets */}
+            <div className="flex flex-wrap gap-1.5">
+              {DEFAULT_PROCESS_PRESETS.slice(0, 6).map((preset) => {
+                const isSelected = selectedProcesses.some((p) => p.name.toLowerCase() === preset.toLowerCase());
+                return (
+                  <button
+                    key={preset}
+                    type="button"
+                    onClick={() => handleAddProcess(preset)}
+                    className={`px-2 py-0.5 rounded text-[11px] font-medium transition-colors cursor-pointer flex items-center gap-1 border ${
+                      isSelected
+                        ? 'bg-teal-950/60 text-teal-300 border-teal-700/80 opacity-60 cursor-default'
+                        : 'bg-slate-900 text-slate-300 border-slate-800 hover:border-teal-500/60 hover:text-white'
+                    }`}
+                  >
+                    <Plus className="w-2.5 h-2.5 text-teal-400" />
+                    <span>{preset}</span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Selected Processes Pills */}
+            {selectedProcesses.length > 0 && (
+              <div className="pt-2 border-t border-slate-800/80 flex flex-wrap gap-1.5">
+                {selectedProcesses.map((proc, idx) => (
+                  <span
+                    key={proc.id}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-teal-950/50 border border-teal-800/70 text-teal-200 text-xs font-medium"
+                  >
+                    <span className="font-mono text-[10px] text-teal-400">#{idx + 1}</span>
+                    <span>{proc.name}</span>
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveProcess(proc.id)}
+                      className="text-slate-400 hover:text-rose-400 cursor-pointer ml-0.5"
+                    >
+                      ✕
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* 4. Notes / Specification Details */}
