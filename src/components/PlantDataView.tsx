@@ -293,6 +293,16 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
     return job.boardSize && !job.boardSize.toLowerCase().includes('punch') ? job.boardSize : 'Not Ordered Yet';
   };
 
+  const isPressJobUrgent = (job: CorrugationJob): boolean => {
+    if (job.isUrgent) return true;
+    return inventory.some(
+      (item) =>
+        Boolean(item.isUrgent) &&
+        ((item.jobId && item.jobId === job.id) ||
+         (item.jobName && item.jobName.trim().toLowerCase() === job.jobName.trim().toLowerCase()))
+    );
+  };
+
   // -----------------------------------------------------------------
   // FILTERED DATA
   // -----------------------------------------------------------------
@@ -797,10 +807,12 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
     // "AFTER COMPELTING ALL THE PROCESS AUTOMATICALLY THE JOB WILL BE COMPLETED"
     const allProcessesCompleted = updatedSteps.length > 0 && updatedSteps.every((p) => p.completed && Boolean(p.completedDate));
     const nextStatus: JobStatus = allProcessesCompleted ? 'Completed' : (targetJob.status === 'Completed' ? 'Pending' : targetJob.status);
+    const completedAt = nextStatus === 'Completed' ? formatReceivedTimestamp() : undefined;
 
     await onUpdateJobDetails(targetJob.id, {
       processes: updatedSteps,
       status: nextStatus,
+      ...(completedAt ? { completedAt } : {}),
     });
 
     if (allProcessesCompleted) {
@@ -1155,28 +1167,49 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
         ctx.fillText('CREATED', 1040, y + 3);
       }
 
-      // 7. Clean Table Rows (White / Light-Slate Alternating)
+      // 7. Clean Table Rows (White / Light-Slate Alternating, or Whole Red Line for Urgent)
       itemsToRender.slice(0, 35).forEach((item: any, idx) => {
         y += rowHeight;
 
-        // Alternating row background
-        ctx.fillStyle = idx % 2 === 0 ? '#ffffff' : '#f8fafc';
-        ctx.fillRect(36, y - 18, width - 72, rowHeight);
+        // Check if urgent (for press, also check if linked stock/die is urgent)
+        const isUrgent =
+          activeTab === 'press'
+            ? Boolean(item.isUrgent) || isPressJobUrgent(item)
+            : Boolean(item.isUrgent);
 
-        // Clean subtle border
-        ctx.strokeStyle = '#e2e8f0';
-        ctx.lineWidth = 0.8;
-        ctx.strokeRect(36, y - 18, width - 72, rowHeight);
+        if (isUrgent) {
+          // Whole row marked as red for Urgent items
+          // 1. Prominent soft red background fill across the entire line
+          ctx.fillStyle = '#fee2e2';
+          ctx.fillRect(36, y - 18, width - 72, rowHeight);
 
-        const isUrgent = Boolean(item.isUrgent);
+          // 2. Solid bold red indicator stripe along the left edge
+          ctx.fillStyle = '#dc2626';
+          ctx.fillRect(36, y - 18, 6, rowHeight);
+
+          // 3. Crisp red border for the entire row
+          ctx.strokeStyle = '#ef4444';
+          ctx.lineWidth = 1.5;
+          ctx.strokeRect(36, y - 18, width - 72, rowHeight);
+        } else {
+          // Alternating normal row background
+          ctx.fillStyle = idx % 2 === 0 ? '#ffffff' : '#f8fafc';
+          ctx.fillRect(36, y - 18, width - 72, rowHeight);
+
+          // Clean subtle border
+          ctx.strokeStyle = '#e2e8f0';
+          ctx.lineWidth = 0.8;
+          ctx.strokeRect(36, y - 18, width - 72, rowHeight);
+        }
 
         // Draw Priority Badge Helper
         const drawPriorityBadge = (posX: number) => {
           if (isUrgent) {
-            drawRoundRect(posX, y - 10, 72, 22, 6, '#fee2e2', '#fca5a5');
-            ctx.fillStyle = '#b91c1c';
+            // High-visibility solid red priority badge with white text
+            drawRoundRect(posX, y - 10, 80, 22, 6, '#dc2626', '#b91c1c');
+            ctx.fillStyle = '#ffffff';
             ctx.font = 'bold 10px system-ui';
-            ctx.fillText('🔥 URGENT', posX + 8, y + 5);
+            ctx.fillText('🔥 URGENT', posX + 9, y + 5);
           } else {
             drawRoundRect(posX, y - 10, 60, 22, 6, '#f1f5f9', '#e2e8f0');
             ctx.fillStyle = '#64748b';
@@ -1189,23 +1222,23 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
           // Priority
           drawPriorityBadge(48);
 
-          // Stock Type
-          ctx.fillStyle = '#0f172a';
+          // Stock Type (Dark red if urgent)
+          ctx.fillStyle = isUrgent ? '#991b1b' : '#0f172a';
           ctx.font = 'bold 12px system-ui';
           ctx.fillText((item.stockType || '').slice(0, 32), 145, y + 5);
 
           // Board Size
-          ctx.fillStyle = '#0284c7';
-          ctx.font = '11px monospace';
+          ctx.fillStyle = isUrgent ? '#b91c1c' : '#0284c7';
+          ctx.font = 'bold 11px monospace';
           ctx.fillText(item.jobSize || 'Standard', 415, y + 5);
 
           // Qty
-          ctx.fillStyle = '#0f172a';
+          ctx.fillStyle = isUrgent ? '#991b1b' : '#0f172a';
           ctx.font = 'bold 12px monospace';
           ctx.fillText(Number(item.quantity || 0).toLocaleString(), 540, y + 5);
 
           // Supplier
-          ctx.fillStyle = '#334155';
+          ctx.fillStyle = isUrgent ? '#991b1b' : '#334155';
           ctx.font = '11px system-ui';
           ctx.fillText((item.receivingFrom || '').slice(0, 24), 670, y + 5);
 
@@ -1217,14 +1250,14 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
             ctx.font = 'bold 10px system-ui';
             ctx.fillText('✅ RECEIVED', 902, y + 5);
           } else {
-            drawRoundRect(890, y - 10, 115, 22, 6, '#fef3c7', '#fde68a');
-            ctx.fillStyle = '#b45309';
+            drawRoundRect(890, y - 10, 115, 22, 6, isUrgent ? '#fef2f2' : '#fef3c7', isUrgent ? '#f87171' : '#fde68a');
+            ctx.fillStyle = isUrgent ? '#b91c1c' : '#b45309';
             ctx.font = 'bold 10px system-ui';
             ctx.fillText('⏳ NOT RECEIVED', 900, y + 5);
           }
 
           // Date
-          ctx.fillStyle = '#64748b';
+          ctx.fillStyle = isUrgent ? '#b91c1c' : '#64748b';
           ctx.font = '10px monospace';
           ctx.fillText((item.orderedAt || '').slice(0, 16), 1030, y + 5);
         } else if (activeTab === 'die') {
@@ -1232,32 +1265,32 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
           drawPriorityBadge(48);
 
           // Date
-          ctx.fillStyle = '#64748b';
+          ctx.fillStyle = isUrgent ? '#b91c1c' : '#64748b';
           ctx.font = '10px monospace';
           ctx.fillText((item.orderedAt || '').slice(0, 10), 135, y + 5);
 
-          // Job Name
-          ctx.fillStyle = '#0f172a';
+          // Job Name (Dark red if urgent)
+          ctx.fillStyle = isUrgent ? '#991b1b' : '#0f172a';
           ctx.font = 'bold 12px system-ui';
           ctx.fillText((item.jobName || 'Unassigned').slice(0, 22), 225, y + 5);
 
           // Job Type
-          ctx.fillStyle = '#475569';
+          ctx.fillStyle = isUrgent ? '#991b1b' : '#475569';
           ctx.font = '11px system-ui';
           ctx.fillText((item.jobType || 'General').slice(0, 20), 410, y + 5);
 
           // Die Maker
-          ctx.fillStyle = '#6d28d9';
-          ctx.font = '11px system-ui';
+          ctx.fillStyle = isUrgent ? '#7f1d1d' : '#6d28d9';
+          ctx.font = 'bold 11px system-ui';
           ctx.fillText((item.dieMaker || item.receivingFrom || '').slice(0, 20), 590, y + 5);
 
           // Punch Type
-          ctx.fillStyle = '#334155';
+          ctx.fillStyle = isUrgent ? '#991b1b' : '#334155';
           ctx.font = '11px system-ui';
           ctx.fillText((item.punchType || item.jobSize || '').slice(0, 16), 760, y + 5);
 
           // Quantity
-          ctx.fillStyle = '#0f172a';
+          ctx.fillStyle = isUrgent ? '#991b1b' : '#0f172a';
           ctx.font = 'bold 12px monospace';
           ctx.fillText(String(item.quantity || 1), 895, y + 5);
 
@@ -1269,8 +1302,8 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
             ctx.font = 'bold 10px system-ui';
             ctx.fillText('✅ RECEIVED', 985, y + 5);
           } else {
-            drawRoundRect(975, y - 10, 95, 22, 6, '#fef3c7', '#fde68a');
-            ctx.fillStyle = '#b45309';
+            drawRoundRect(975, y - 10, 95, 22, 6, isUrgent ? '#fef2f2' : '#fef3c7', isUrgent ? '#f87171' : '#fde68a');
+            ctx.fillStyle = isUrgent ? '#b91c1c' : '#b45309';
             ctx.font = 'bold 10px system-ui';
             ctx.fillText('⏳ PENDING', 988, y + 5);
           }
@@ -1278,23 +1311,23 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
           // Press Row
           drawPriorityBadge(48);
 
-          // Job Name
-          ctx.fillStyle = '#0f172a';
+          // Job Name (Dark red if urgent)
+          ctx.fillStyle = isUrgent ? '#991b1b' : '#0f172a';
           ctx.font = 'bold 12px system-ui';
           ctx.fillText((item.jobName || '').slice(0, 26), 145, y + 5);
 
           // Board Size
-          ctx.fillStyle = '#b45309';
-          ctx.font = '11px monospace';
+          ctx.fillStyle = isUrgent ? '#b91c1c' : '#b45309';
+          ctx.font = 'bold 11px monospace';
           ctx.fillText(getLinkedBoardSize(item as CorrugationJob), 380, y + 5);
 
           // Job Size
-          ctx.fillStyle = '#0284c7';
+          ctx.fillStyle = isUrgent ? '#b91c1c' : '#0284c7';
           ctx.font = '11px monospace';
           ctx.fillText(item.jobSize || '—', 510, y + 5);
 
           // Press Name
-          ctx.fillStyle = '#334155';
+          ctx.fillStyle = isUrgent ? '#991b1b' : '#334155';
           ctx.font = '11px system-ui';
           ctx.fillText((item.pressName || 'Not Assigned').slice(0, 24), 645, y + 5);
 
@@ -1306,14 +1339,14 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
             ctx.font = 'bold 10px system-ui';
             ctx.fillText('✅ COMPLETED', 915, y + 5);
           } else {
-            drawRoundRect(905, y - 10, 95, 22, 6, '#fef3c7', '#fde68a');
-            ctx.fillStyle = '#b45309';
+            drawRoundRect(905, y - 10, 95, 22, 6, isUrgent ? '#fef2f2' : '#fef3c7', isUrgent ? '#f87171' : '#fde68a');
+            ctx.fillStyle = isUrgent ? '#b91c1c' : '#b45309';
             ctx.font = 'bold 10px system-ui';
             ctx.fillText('⏳ PENDING', 918, y + 5);
           }
 
           // Created Date
-          ctx.fillStyle = '#64748b';
+          ctx.fillStyle = isUrgent ? '#b91c1c' : '#64748b';
           ctx.font = '10px monospace';
           ctx.fillText((item.createdAt || '').slice(0, 16), 1040, y + 5);
         }
@@ -1747,7 +1780,7 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
                         <tr 
                           key={item.id} 
                           className={`hover:bg-slate-800/40 transition-colors ${
-                            isUrgent ? 'bg-rose-950/10' : ''
+                            isUrgent ? 'bg-rose-950/30 border-l-4 border-l-rose-500' : ''
                           }`}
                         >
                           {/* 1. Urgent Toggle Button */}
@@ -2190,7 +2223,7 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
                         <tr 
                           key={item.id} 
                           className={`hover:bg-slate-800/40 transition-colors ${
-                            isUrgent ? 'bg-rose-950/10' : ''
+                            isUrgent ? 'bg-rose-950/30 border-l-4 border-l-rose-500' : ''
                           }`}
                         >
                           {/* 1. Urgent Toggle Button for Die */}
@@ -2629,13 +2662,13 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
                   ) : (
                     filteredPressJobs.map((job) => {
                       const isCompleted = job.pressStatus === 'Completed';
-                      const isUrgent = Boolean(job.isUrgent);
+                      const isUrgent = Boolean(job.isUrgent) || isPressJobUrgent(job);
 
                       return (
                         <tr 
                           key={job.id} 
                           className={`hover:bg-slate-800/40 transition-colors ${
-                            isUrgent ? 'bg-rose-950/10' : ''
+                            isUrgent ? 'bg-rose-950/30 border-l-4 border-l-rose-500' : ''
                           }`}
                         >
                           {/* 1. Urgent Toggle */}

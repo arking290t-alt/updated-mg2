@@ -23,7 +23,8 @@ import {
   Camera,
   Image as ImageIcon,
   Sparkles,
-  PackageCheck
+  PackageCheck,
+  Disc
 } from 'lucide-react';
 import { 
   InventoryItem, 
@@ -100,8 +101,11 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
   const safeJobs = Array.isArray(availableJobs) ? availableJobs.filter(Boolean) : [];
   const safeInventory = Array.isArray(existingInventory) ? existingInventory.filter(Boolean) : [];
 
-  // Primary Order Category: Stock vs Die
-  const [activeCategory, setActiveCategory] = useState<'Stock' | 'Die'>('Stock');
+  // Primary Order Category: Stock vs Die vs Reel
+  const [activeCategory, setActiveCategory] = useState<'Stock' | 'Die' | 'Reel'>('Stock');
+
+  // Urgent order priority toggle
+  const [isUrgentOrder, setIsUrgentOrder] = useState<boolean>(false);
 
   // Common Order Date
   const [orderDate, setOrderDate] = useState<string>(todayIso);
@@ -409,7 +413,7 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
       return false;
     }
     if (!jobSize.trim()) {
-      setErrorMessage(isExistingStock ? 'Please select an Available Size for this stock type.' : 'Please enter the Board Size.');
+      setErrorMessage(isExistingStock ? 'Please select an Available Size for this stock type.' : (activeCategory === 'Reel' ? 'Please enter the Reel Width / Size.' : 'Please enter the Board Size.'));
       return false;
     }
     if (!receivingFrom.trim()) {
@@ -421,10 +425,10 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
       }
     }
     if (quantity <= 0) {
-      setErrorMessage('Please enter a valid Quantity.');
+      setErrorMessage(activeCategory === 'Reel' ? 'Please enter a valid Reel Quantity in KGs.' : 'Please enter a valid Quantity.');
       return false;
     }
-    if (isPrinted && !pressName.trim()) {
+    if (activeCategory === 'Stock' && isPrinted && !pressName.trim()) {
       setErrorMessage('Please select or add a Press Name for printed stock.');
       return false;
     }
@@ -459,30 +463,32 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
     setIsAddingNewJobType(false);
   };
 
-  // Add current configured stock to the multi-stock queue
+  // Add current configured stock or reel to the multi-stock queue
   const handleAddCurrentStockToQueue = () => {
     if (!validateCurrentItem()) return;
 
-    const activeJob = targetJob || (selectedJobId && selectedJobId !== 'custom' ? availableJobs.find((j) => j.id === selectedJobId) : undefined);
+    const activeJob = targetJob || (selectedJobId && selectedJobId !== 'custom' && selectedJobId !== 'without_job' ? availableJobs.find((j) => j.id === selectedJobId) : undefined);
     const nowTime = formatReceivedTimestamp();
+    const isReel = activeCategory === 'Reel';
 
     const newEntry: StockItemEntry = {
       id: `entry-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
-      category: 'Stock',
+      category: isReel ? 'Reel' : 'Stock',
       stockType: stockType.trim(),
       jobSize: jobSize.trim(),
       receivingFrom: receivingFrom.trim(),
-      isPrinted,
-      pressName: isPrinted ? pressName.trim() : undefined,
+      isPrinted: isReel ? false : isPrinted,
+      pressName: isReel ? undefined : (isPrinted ? pressName.trim() : undefined),
       quantity: Number(quantity),
+      unit: isReel ? 'KGs' : 'Units',
       notes: notes.trim() || undefined,
       orderedAt: `${orderDate} 12:00`,
       status: isExistingStock ? 'Received' : 'Not Received',
       receivedAt: isExistingStock ? nowTime : undefined,
       isExistingStock,
       photoUrl: undefined,
-      pressPhotoUrl: isPrinted && pressPhotoUrl ? pressPhotoUrl : undefined,
-      isUrgent: activeJob ? Boolean(activeJob.isUrgent) : false,
+      pressPhotoUrl: !isReel && isPrinted && pressPhotoUrl ? pressPhotoUrl : undefined,
+      isUrgent: activeJob ? Boolean(activeJob.isUrgent) : isUrgentOrder,
       jobId: activeJob ? activeJob.id : undefined,
       jobName: activeJob ? activeJob.jobName : undefined,
     };
@@ -529,7 +535,7 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
       quantity: Number(dieQuantity) || 1,
       orderedAt: `${orderDate} 12:00`,
       status: 'Not Received',
-      isUrgent: activeJob ? Boolean(activeJob.isUrgent) : false,
+      isUrgent: activeJob ? Boolean(activeJob.isUrgent) : isUrgentOrder,
       notes: dieNotes.trim() || undefined,
       photoUrl: diePhotoUrl || undefined,
     };
@@ -576,29 +582,31 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
 
     let allItemsToSubmit: StockItemEntry[] = [...stockQueue];
 
-    const activeJob = targetJob || (selectedJobId && selectedJobId !== 'custom' ? availableJobs.find((j) => j.id === selectedJobId) : undefined);
+    const activeJob = targetJob || (selectedJobId && selectedJobId !== 'custom' && selectedJobId !== 'without_job' ? availableJobs.find((j) => j.id === selectedJobId) : undefined);
 
-    // If on Stock tab and has filled in current form fields, validate and include it
-    if (activeCategory === 'Stock' && stockType.trim()) {
+    // If on Stock or Reel tab and has filled in current form fields, validate and include it
+    if ((activeCategory === 'Stock' || activeCategory === 'Reel') && stockType.trim()) {
       if (!validateCurrentItem()) return;
       const nowTime = formatReceivedTimestamp();
+      const isReel = activeCategory === 'Reel';
       allItemsToSubmit.push({
         id: `entry-${Date.now()}`,
-        category: 'Stock',
+        category: isReel ? 'Reel' : 'Stock',
         stockType: stockType.trim(),
         jobSize: jobSize.trim(),
         receivingFrom: receivingFrom.trim(),
-        isPrinted,
-        pressName: isPrinted ? pressName.trim() : undefined,
+        isPrinted: isReel ? false : isPrinted,
+        pressName: isReel ? undefined : (isPrinted ? pressName.trim() : undefined),
         quantity: Number(quantity),
+        unit: isReel ? 'KGs' : 'Units',
         notes: notes.trim() || undefined,
         orderedAt: `${orderDate} 12:00`,
         status: isExistingStock ? 'Received' : 'Not Received',
         receivedAt: isExistingStock ? nowTime : undefined,
         isExistingStock,
         photoUrl: undefined,
-        pressPhotoUrl: isPrinted && pressPhotoUrl ? pressPhotoUrl : undefined,
-        isUrgent: activeJob ? Boolean(activeJob.isUrgent) : false,
+        pressPhotoUrl: !isReel && isPrinted && pressPhotoUrl ? pressPhotoUrl : undefined,
+        isUrgent: activeJob ? Boolean(activeJob.isUrgent) : isUrgentOrder,
         jobId: activeJob ? activeJob.id : undefined,
         jobName: activeJob ? activeJob.jobName : undefined,
       });
@@ -618,7 +626,7 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
         quantity: Number(dieQuantity) || 1,
         orderedAt: `${orderDate} 12:00`,
         status: 'Not Received',
-        isUrgent: activeJob ? Boolean(activeJob.isUrgent) : false,
+        isUrgent: activeJob ? Boolean(activeJob.isUrgent) : isUrgentOrder,
         notes: dieNotes.trim() || undefined,
         photoUrl: diePhotoUrl || undefined,
       });
@@ -628,33 +636,50 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
       setErrorMessage(
         activeCategory === 'Die'
           ? 'Please enter the Job Name, Die Maker, and Punch Type to order a Die.'
+          : activeCategory === 'Reel'
+          ? 'Please select or add at least one paper reel to order.'
           : 'Please select or add at least one stock item to order.'
       );
       return;
     }
 
-    const payload = allItemsToSubmit.map((item) => ({
-      category: item.category || 'Stock',
-      stockType: item.stockType,
-      jobSize: item.jobSize,
-      receivingFrom: item.receivingFrom,
-      dieMaker: item.dieMaker,
-      punchType: item.punchType,
-      isPrinted: item.isPrinted,
-      pressName: item.pressName,
-      quantity: item.quantity,
-      jobId: item.jobId || (activeJob ? activeJob.id : undefined),
-      jobName: item.jobName || (activeJob ? activeJob.jobName : undefined),
-      jobType: item.jobType,
-      notes: item.notes,
-      orderedAt: item.orderedAt || `${orderDate} 12:00`,
-      status: item.status || 'Not Received',
-      receivedAt: item.receivedAt,
-      isExistingStock: Boolean(item.isExistingStock),
-      isUrgent: item.isUrgent !== undefined ? item.isUrgent : (activeJob ? Boolean(activeJob.isUrgent) : false),
-      photoUrl: item.category === 'Die' ? (item.photoUrl || undefined) : undefined,
-      pressPhotoUrl: item.pressPhotoUrl || undefined,
-    }));
+    const isTargetJobCompleted = activeJob?.status === 'Completed';
+
+    const payload = allItemsToSubmit.map((item) => {
+      const isItemJobCompleted = Boolean(item.isUsed) || isTargetJobCompleted;
+      const linkedJobId = item.jobId || (activeJob ? activeJob.id : undefined);
+      const linkedJobName = item.jobName || (activeJob ? activeJob.jobName : undefined);
+      const linkedJobDesc = activeJob ? (activeJob.notes || activeJob.jobType || 'Completed with Job') : 'Completed with Job';
+
+      return {
+        category: item.category || 'Stock',
+        stockType: item.stockType,
+        jobSize: item.jobSize,
+        receivingFrom: item.receivingFrom,
+        dieMaker: item.dieMaker,
+        punchType: item.punchType,
+        isPrinted: item.category === 'Reel' ? false : Boolean(item.isPrinted),
+        pressName: item.category === 'Reel' ? undefined : item.pressName,
+        quantity: item.quantity,
+        unit: item.unit || (item.category === 'Reel' ? 'KGs' : 'Units'),
+        jobId: linkedJobId,
+        jobName: linkedJobName,
+        jobType: item.jobType,
+        notes: item.notes,
+        orderedAt: item.orderedAt || `${orderDate} 12:00`,
+        status: isItemJobCompleted ? 'Used' : (item.status || 'Not Received'),
+        receivedAt: item.receivedAt,
+        isExistingStock: Boolean(item.isExistingStock),
+        isUrgent: item.isUrgent !== undefined ? item.isUrgent : (activeJob ? Boolean(activeJob.isUrgent) : isUrgentOrder),
+        photoUrl: item.category === 'Die' ? (item.photoUrl || undefined) : undefined,
+        pressPhotoUrl: item.pressPhotoUrl || undefined,
+        isUsed: isItemJobCompleted,
+        usedAt: isItemJobCompleted ? (activeJob?.completedAt || formatReceivedTimestamp()) : item.usedAt,
+        usedJobId: isItemJobCompleted ? linkedJobId : item.usedJobId,
+        usedJobName: isItemJobCompleted ? linkedJobName : item.usedJobName,
+        usedJobDescription: isItemJobCompleted ? linkedJobDesc : item.usedJobDescription,
+      };
+    });
 
     onSaveInventoryOrders(payload as any);
 
@@ -695,38 +720,71 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
           </button>
         </div>
 
-        {/* Category Switcher Tabs: 1. Paper / Board Stock, 2. Die */}
-        <div className="px-6 pt-2 bg-slate-950/60 border-b border-slate-800 flex gap-1 shrink-0">
-          <button
-            type="button"
-            onClick={() => {
-              setActiveCategory('Stock');
-              setErrorMessage('');
-            }}
-            className={`flex items-center gap-2 px-4 py-2.5 text-xs font-bold border-b-2 transition-all cursor-pointer ${
-              activeCategory === 'Stock'
-                ? 'border-amber-500 text-amber-400 bg-amber-500/5'
-                : 'border-transparent text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            <Layers className="w-3.5 h-3.5" />
-            <span>1. Raw Paper / Board Stock</span>
-          </button>
+        {/* Category Switcher Tabs: 1. Paper / Board Stock, 2. Die Tooling, 3. Paper Reel */}
+        <div className="px-6 pt-2 bg-slate-950/60 border-b border-slate-800 flex items-center justify-between flex-wrap gap-2 shrink-0">
+          <div className="flex flex-wrap gap-1">
+            <button
+              type="button"
+              onClick={() => {
+                setActiveCategory('Stock');
+                setErrorMessage('');
+              }}
+              className={`flex items-center gap-2 px-4 py-2.5 text-xs font-bold border-b-2 transition-all cursor-pointer ${
+                activeCategory === 'Stock'
+                  ? 'border-amber-500 text-amber-400 bg-amber-500/5'
+                  : 'border-transparent text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <Layers className="w-3.5 h-3.5" />
+              <span>1. Board Stock</span>
+            </button>
 
+            <button
+              type="button"
+              onClick={() => {
+                setActiveCategory('Die');
+                setErrorMessage('');
+              }}
+              className={`flex items-center gap-2 px-4 py-2.5 text-xs font-bold border-b-2 transition-all cursor-pointer ${
+                activeCategory === 'Die'
+                  ? 'border-purple-500 text-purple-400 bg-purple-500/5'
+                  : 'border-transparent text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <Scissors className="w-3.5 h-3.5" />
+              <span>2. Die Tooling</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setActiveCategory('Reel');
+                setErrorMessage('');
+              }}
+              className={`flex items-center gap-2 px-4 py-2.5 text-xs font-bold border-b-2 transition-all cursor-pointer ${
+                activeCategory === 'Reel'
+                  ? 'border-sky-500 text-sky-400 bg-sky-500/5'
+                  : 'border-transparent text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <Disc className="w-3.5 h-3.5" />
+              <span>3. Paper Reel (in KGs)</span>
+            </button>
+          </div>
+
+          {/* Urgent Priority Order Toggle */}
           <button
             type="button"
-            onClick={() => {
-              setActiveCategory('Die');
-              setErrorMessage('');
-            }}
-            className={`flex items-center gap-2 px-4 py-2.5 text-xs font-bold border-b-2 transition-all cursor-pointer ${
-              activeCategory === 'Die'
-                ? 'border-purple-500 text-purple-400 bg-purple-500/5'
-                : 'border-transparent text-slate-400 hover:text-slate-200'
+            onClick={() => setIsUrgentOrder(!isUrgentOrder)}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer border ${
+              isUrgentOrder
+                ? 'bg-rose-500/20 text-rose-300 border-rose-500 shadow-sm animate-pulse'
+                : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-rose-400 hover:border-slate-700'
             }`}
+            title="Mark this entire order as Urgent"
           >
-            <Scissors className="w-3.5 h-3.5" />
-            <span>2. Die Tooling Order</span>
+            <Flame className={`w-3.5 h-3.5 ${isUrgentOrder ? 'text-rose-400 fill-rose-400' : 'text-slate-500'}`} />
+            <span>{isUrgentOrder ? '🔥 Order is Urgent' : 'Mark as Urgent'}</span>
           </button>
         </div>
 
@@ -783,6 +841,11 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
                           <span className="px-1.5 py-0.2 rounded text-[10px] bg-purple-500/20 text-purple-300 border border-purple-500/30">
                             Die Tool
                           </span>
+                        ) : item.category === 'Reel' ? (
+                          <span className="px-1.5 py-0.2 rounded text-[10px] bg-sky-500/20 text-sky-300 border border-sky-500/30 font-semibold flex items-center gap-1">
+                            <Disc className="w-3 h-3 text-sky-400" />
+                            Paper Reel
+                          </span>
                         ) : (
                           <span className="px-1.5 py-0.2 rounded text-[10px] bg-slate-800 text-slate-300">
                             {item.isPrinted ? `Printed (${item.pressName})` : 'Non-Printed'}
@@ -807,7 +870,9 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
                       <div className="text-[11px] text-slate-400 font-mono mt-0.5">
                         {item.category === 'Die'
                           ? `Job: ${item.jobName || 'Unassigned'} · Maker: ${item.dieMaker || 'N/A'} · Punch: ${item.punchType || 'N/A'} · Qty: ${item.quantity || 1}`
-                          : `Board Size: ${item.jobSize || 'Standard'} · From: ${item.receivingFrom || 'Warehouse'} · Qty: ${Number(item.quantity || 0).toLocaleString()}`}
+                          : item.category === 'Reel'
+                          ? `Reel Width: ${item.jobSize || 'Standard'} · Mill: ${item.receivingFrom || 'Warehouse'} · Weight: ${Number(item.quantity || 0).toLocaleString()} KGs`
+                          : `Board Size: ${item.jobSize || 'Standard'} · From: ${item.receivingFrom || 'Warehouse'} · Qty: ${Number(item.quantity || 0).toLocaleString()} Units`}
                       </div>
                     </div>
 
@@ -1117,16 +1182,94 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
           )}
 
           {/* ========================================================= */}
-          {/* TAB 1: RAW PAPER / BOARD STOCK FORM */}
+          {/* TAB 1: RAW PAPER / BOARD STOCK OR PAPER REEL FORM */}
           {/* ========================================================= */}
-          {activeCategory === 'Stock' && (
+          {(activeCategory === 'Stock' || activeCategory === 'Reel') && (
             <div className="space-y-4 animate-in fade-in duration-150">
 
-              {/* Section Divider: Configure Stock Item */}
+              {/* Section Divider: Configure Stock / Reel Item */}
               <div className="flex items-center justify-between pb-1 border-b border-slate-800">
-                <span className="text-xs font-bold text-white uppercase font-mono tracking-wide">
-                  {stockQueue.length > 0 ? '+ Configure Additional Stock Item' : 'Stock Details'}
+                <span className="text-xs font-bold text-white uppercase font-mono tracking-wide flex items-center gap-1.5">
+                  {activeCategory === 'Reel' ? (
+                    <>
+                      <Disc className="w-3.5 h-3.5 text-sky-400" />
+                      <span>{stockQueue.length > 0 ? '+ Configure Additional Paper Reel' : 'Paper Reel Details (Measured in KGs)'}</span>
+                    </>
+                  ) : (
+                    <>
+                      <Layers className="w-3.5 h-3.5 text-amber-400" />
+                      <span>{stockQueue.length > 0 ? '+ Configure Additional Stock Item' : 'Board Stock Details'}</span>
+                    </>
+                  )}
                 </span>
+              </div>
+
+              {/* Job Assignment: Attach to Job OR Order without Job (Buffer Stock) */}
+              <div className="p-3.5 rounded-xl bg-slate-950/80 border border-slate-800 space-y-2">
+                {targetJob ? (
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <span className="text-[10px] text-slate-400 uppercase font-mono">Ordering for Job:</span>
+                      <div className="text-xs font-bold text-white mt-0.5">
+                        {targetJob.jobName || 'Selected Job'}
+                      </div>
+                    </div>
+                    <span className="text-[10px] font-mono text-emerald-400 font-semibold bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
+                      Attached to Job
+                    </span>
+                  </div>
+                ) : (
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label className="block text-xs font-semibold text-slate-200">
+                        Job Allocation / Assignment
+                      </label>
+                      <span className="text-[10px] font-mono text-sky-400 font-semibold">
+                        {!selectedJobId || selectedJobId === 'without_job'
+                          ? '📦 "Inventory without Jobs"'
+                          : '🔗 Attached to Job'}
+                      </span>
+                    </div>
+
+                    <select
+                      value={selectedJobId}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setSelectedJobId(val);
+                        if (!val || val === 'without_job') {
+                          setDieJobName('');
+                        } else if (val === 'custom') {
+                          // custom
+                        } else {
+                          const found = safeJobs.find((j) => j && j.id === val);
+                          if (found) {
+                            setDieJobName(found.jobName || '');
+                            if (found.jobSize || found.boardSize) {
+                              setJobSize(found.jobSize || found.boardSize || '');
+                            }
+                          }
+                        }
+                      }}
+                      className="w-full px-3 py-2 bg-slate-900 border border-slate-800 rounded-xl text-xs text-white focus:outline-none focus:border-sky-500 cursor-pointer"
+                    >
+                      <option value="">📦 Order without Job (Goes to &quot;Inventory without Jobs&quot;)</option>
+                      {safeJobs.map((j) => (
+                        <option key={j.id} value={j.id}>
+                          🔗 {j.jobName || 'Unnamed'} ({j.jobType || 'General'})
+                        </option>
+                      ))}
+                    </select>
+
+                    {(!selectedJobId || selectedJobId === 'without_job') && (
+                      <p className="text-[11px] text-slate-400 mt-1.5 flex items-center gap-1.5">
+                        <Layers className="w-3.5 h-3.5 text-sky-400 shrink-0" />
+                        <span>
+                          Ordered without attaching to a job. This item will appear in <strong>&quot;Inventory without Jobs&quot;</strong>, where you can later mark it as Used for any Job Name and Job Type.
+                        </span>
+                      </p>
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* Option: Use Existing Stock for Job */}
@@ -1142,11 +1285,11 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
                         ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40'
                         : 'bg-slate-900 text-slate-400 border-slate-800'
                     }`}>
-                      <Layers className="w-4 h-4" />
+                      {activeCategory === 'Reel' ? <Disc className="w-4 h-4 text-sky-400" /> : <Layers className="w-4 h-4" />}
                     </div>
                     <div>
                       <div className="text-xs font-bold text-white flex items-center gap-1.5">
-                        <span>Use Existing Stock for Job</span>
+                        <span>{activeCategory === 'Reel' ? 'Use Existing Warehouse Reel for Job' : 'Use Existing Stock for Job'}</span>
                         {isExistingStock && (
                           <span className="px-1.5 py-0.2 rounded text-[10px] font-mono bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
                             In-House / Received
@@ -1603,207 +1746,217 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
                 </div>
               )}
 
-          {/* 4. PRINTED OR NON-PRINTED & 5. PRESS NAME (Search & Save) */}
-          <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-3">
-            <label className="block text-xs font-semibold text-slate-200">
-              Print Specification <span className="text-amber-400">*</span>
-            </label>
+          {/* 4. PRINTED OR NON-PRINTED & 5. PRESS NAME - ONLY FOR BOARD STOCK (REEL IS RAW PAPER, NOT PRINTED) */}
+          {activeCategory === 'Stock' && (
+            <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-3">
+              <label className="block text-xs font-semibold text-slate-200">
+                Print Specification <span className="text-amber-400">*</span>
+              </label>
 
-            <div className="grid grid-cols-2 gap-3">
-              <button
-                type="button"
-                onClick={() => setIsPrinted(false)}
-                className={`p-3 rounded-xl border text-left transition-all cursor-pointer flex items-center gap-2.5 ${
-                  !isPrinted
-                    ? 'bg-slate-900 border-amber-500 text-white shadow-xs'
-                    : 'bg-slate-950 border-slate-800 text-slate-400 hover:border-slate-700'
-                }`}
-              >
-                <div className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${
-                  !isPrinted ? 'bg-slate-800 text-amber-400' : 'bg-slate-900 text-slate-500'
-                }`}>
-                  <FileText className="w-4 h-4" />
-                </div>
-                <div>
-                  <div className="text-xs font-bold text-white">Non-Printed</div>
-                  <div className="text-[10px] text-slate-400">Plain Kraft / Fluted board</div>
-                </div>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setIsPrinted(true)}
-                className={`p-3 rounded-xl border text-left transition-all cursor-pointer flex items-center gap-2.5 ${
-                  isPrinted
-                    ? 'bg-amber-500/10 border-amber-500 text-white shadow-xs'
-                    : 'bg-slate-950 border-slate-800 text-slate-400 hover:border-slate-700'
-                }`}
-              >
-                <div className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${
-                  isPrinted ? 'bg-amber-500 text-slate-950' : 'bg-slate-900 text-slate-500'
-                }`}>
-                  <Printer className="w-4 h-4" />
-                </div>
-                <div>
-                  <div className="text-xs font-bold text-white">Printed</div>
-                  <div className="text-[10px] text-slate-400">Requires press allocation</div>
-                </div>
-              </button>
-            </div>
-
-            {/* 5. PRESS NAME with Search and Save as requested */}
-            {isPrinted && (
-              <div className="pt-2 relative animate-in fade-in duration-200">
-                <div className="flex items-center justify-between mb-1.5">
-                  <label className="block text-xs font-medium text-amber-300">
-                    Press Name <span className="text-amber-400">*</span>
-                  </label>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIsAddingNewPress(!isAddingNewPress);
-                      setIsPressDropdownOpen(false);
-                    }}
-                    className="text-[11px] text-amber-400 hover:text-amber-300 font-medium flex items-center gap-1 cursor-pointer"
-                  >
-                    <Plus className="w-3 h-3" />
-                    <span>{isAddingNewPress ? 'Select existing' : '+ Add Press'}</span>
-                  </button>
-                </div>
-
-                {isAddingNewPress && (
-                  <div className="p-3 bg-slate-900 border border-amber-500/40 rounded-xl space-y-2 mb-2">
-                    <span className="text-[11px] text-amber-400 font-medium">New Press Name:</span>
-                    <div className="flex gap-2">
-                      <input
-                        type="text"
-                        value={newPressInput}
-                        onChange={(e) => setNewPressInput(e.target.value)}
-                        placeholder="e.g. Bobst Expertline 1.6, Heidelberg 4-Color..."
-                        autoFocus
-                        className="flex-1 px-3 py-1.5 bg-slate-950 border border-slate-800 rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500"
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') {
-                            e.preventDefault();
-                            handleSavePress();
-                          }
-                        }}
-                      />
-                      <button
-                        type="button"
-                        onClick={() => handleSavePress()}
-                        className="px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-semibold rounded-lg transition-colors cursor-pointer"
-                      >
-                        Save & Select
-                      </button>
-                    </div>
-                  </div>
-                )}
-
-                <div
-                  onClick={() => setIsPressDropdownOpen(!isPressDropdownOpen)}
-                  className={`w-full px-3.5 py-2.5 bg-slate-900 border rounded-xl text-xs flex items-center justify-between cursor-pointer transition-colors ${
-                    isPressDropdownOpen ? 'border-amber-400' : 'border-slate-800 hover:border-slate-700'
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  onClick={() => setIsPrinted(false)}
+                  className={`p-3 rounded-xl border text-left transition-all cursor-pointer flex items-center gap-2.5 ${
+                    !isPrinted
+                      ? 'bg-slate-900 border-amber-500 text-white shadow-xs'
+                      : 'bg-slate-950 border-slate-800 text-slate-400 hover:border-slate-700'
                   }`}
                 >
-                  <div className="flex items-center gap-2 truncate">
-                    <Printer className="w-4 h-4 text-amber-400 shrink-0" />
-                    <span className={pressName ? 'text-white font-medium' : 'text-slate-500'}>
-                      {pressName || 'Search and select press name...'}
-                    </span>
+                  <div className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${
+                    !isPrinted ? 'bg-slate-800 text-amber-400' : 'bg-slate-900 text-slate-500'
+                  }`}>
+                    <FileText className="w-4 h-4" />
                   </div>
-                  <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform ${isPressDropdownOpen ? 'rotate-180' : ''}`} />
-                </div>
+                  <div>
+                    <div className="text-xs font-bold text-white">Non-Printed</div>
+                    <div className="text-[10px] text-slate-400">Plain Kraft / Fluted board</div>
+                  </div>
+                </button>
 
-                {isPressDropdownOpen && (
-                  <div className="absolute left-0 right-0 top-full mt-1.5 z-30 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl overflow-hidden p-2">
-                    <div className="relative mb-2">
-                      <Search className="w-3.5 h-3.5 text-slate-500 absolute left-3 top-2.5" />
-                      <input
-                        type="text"
-                        value={pressSearch}
-                        onChange={(e) => setPressSearch(e.target.value)}
-                        placeholder="Search press machines..."
-                        autoFocus
-                        className="w-full pl-8 pr-3 py-1.5 bg-slate-950 border border-slate-800 rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500"
-                      />
+                <button
+                  type="button"
+                  onClick={() => setIsPrinted(true)}
+                  className={`p-3 rounded-xl border text-left transition-all cursor-pointer flex items-center gap-2.5 ${
+                    isPrinted
+                      ? 'bg-amber-500/10 border-amber-500 text-white shadow-xs'
+                      : 'bg-slate-950 border-slate-800 text-slate-400 hover:border-slate-700'
+                  }`}
+                >
+                  <div className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${
+                    isPrinted ? 'bg-amber-500 text-slate-950' : 'bg-slate-900 text-slate-500'
+                  }`}>
+                    <Printer className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <div className="text-xs font-bold text-white">Printed</div>
+                    <div className="text-[10px] text-slate-400">Requires press allocation</div>
+                  </div>
+                </button>
+              </div>
+
+              {/* 5. PRESS NAME with Search and Save as requested */}
+              {isPrinted && (
+                <div className="pt-2 relative animate-in fade-in duration-200">
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="block text-xs font-medium text-amber-300">
+                      Press Name <span className="text-amber-400">*</span>
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsAddingNewPress(!isAddingNewPress);
+                        setIsPressDropdownOpen(false);
+                      }}
+                      className="text-[11px] text-amber-400 hover:text-amber-300 font-medium flex items-center gap-1 cursor-pointer"
+                    >
+                      <Plus className="w-3 h-3" />
+                      <span>{isAddingNewPress ? 'Select existing' : '+ Add Press'}</span>
+                    </button>
+                  </div>
+
+                  {isAddingNewPress && (
+                    <div className="p-3 bg-slate-900 border border-amber-500/40 rounded-xl space-y-2 mb-2">
+                      <span className="text-[11px] text-amber-400 font-medium">New Press Name:</span>
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          value={newPressInput}
+                          onChange={(e) => setNewPressInput(e.target.value)}
+                          placeholder="e.g. Bobst Expertline 1.6, Heidelberg 4-Color..."
+                          autoFocus
+                          className="flex-1 px-3 py-1.5 bg-slate-950 border border-slate-800 rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500"
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              handleSavePress();
+                            }
+                          }}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => handleSavePress()}
+                          className="px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-semibold rounded-lg transition-colors cursor-pointer"
+                        >
+                          Save & Select
+                        </button>
+                      </div>
                     </div>
+                  )}
 
-                    <div className="max-h-40 overflow-y-auto space-y-1">
-                      <div className="px-2 py-1 text-[10px] font-mono text-slate-400 uppercase tracking-wider flex items-center justify-between border-b border-slate-800 mb-1">
-                        <span>Saved Presses ({filteredPresses.length})</span>
-                        {pressSearch && <span>Filter: "{pressSearch}"</span>}
+                  <div
+                    onClick={() => setIsPressDropdownOpen(!isPressDropdownOpen)}
+                    className={`w-full px-3.5 py-2.5 bg-slate-900 border rounded-xl text-xs flex items-center justify-between cursor-pointer transition-colors ${
+                      isPressDropdownOpen ? 'border-amber-400' : 'border-slate-800 hover:border-slate-700'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2 truncate">
+                      <Printer className="w-4 h-4 text-amber-400 shrink-0" />
+                      <span className={pressName ? 'text-white font-medium' : 'text-slate-500'}>
+                        {pressName || 'Search and select press name...'}
+                      </span>
+                    </div>
+                    <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform ${isPressDropdownOpen ? 'rotate-180' : ''}`} />
+                  </div>
+
+                  {isPressDropdownOpen && (
+                    <div className="absolute left-0 right-0 top-full mt-1.5 z-30 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl overflow-hidden p-2">
+                      <div className="relative mb-2">
+                        <Search className="w-3.5 h-3.5 text-slate-500 absolute left-3 top-2.5" />
+                        <input
+                          type="text"
+                          value={pressSearch}
+                          onChange={(e) => setPressSearch(e.target.value)}
+                          placeholder="Search press machines..."
+                          autoFocus
+                          className="w-full pl-8 pr-3 py-1.5 bg-slate-950 border border-slate-800 rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500"
+                        />
                       </div>
 
-                      {filteredPresses.length > 0 ? (
-                        filteredPresses.map((p) => (
-                          <div
-                            key={p}
-                            className={`px-3 py-1.5 text-xs rounded-lg flex items-center justify-between cursor-pointer transition-colors group ${
-                              pressName === p
-                                ? 'bg-amber-500/10 text-amber-300 font-semibold'
-                                : 'text-slate-300 hover:bg-slate-800 hover:text-white'
-                            }`}
-                          >
-                            <div
-                              onClick={() => handleSelectPress(p)}
-                              className="flex-1 flex items-center gap-2 truncate"
-                            >
-                              <span className="truncate">{p}</span>
-                              {pressName === p && <Check className="w-3.5 h-3.5 text-amber-400 shrink-0" />}
-                            </div>
-
-                            {onDeletePress && (
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setDeleteConfirmTarget({
-                                    category: 'press',
-                                    idOrName: p,
-                                    label: p,
-                                  });
-                                }}
-                                className="p-1 text-slate-500 hover:text-rose-400 hover:bg-slate-700/50 rounded transition-colors opacity-70 group-hover:opacity-100 ml-2"
-                                title={`Delete saved press "${p}"`}
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
-                            )}
-                          </div>
-                        ))
-                      ) : (
-                        <div className="p-3 text-center text-xs text-slate-400">
-                          <span>No saved presses match "{pressSearch}".</span>
-                          <p className="text-[11px] text-slate-500 mt-1">
-                            Only saved items are shown in search.
-                          </p>
+                      <div className="max-h-40 overflow-y-auto space-y-1">
+                        <div className="px-2 py-1 text-[10px] font-mono text-slate-400 uppercase tracking-wider flex items-center justify-between border-b border-slate-800 mb-1">
+                          <span>Saved Presses ({filteredPresses.length})</span>
+                          {pressSearch && <span>Filter: "{pressSearch}"</span>}
                         </div>
-                      )}
+
+                        {filteredPresses.length > 0 ? (
+                          filteredPresses.map((p) => (
+                            <div
+                              key={p}
+                              className={`px-3 py-1.5 text-xs rounded-lg flex items-center justify-between cursor-pointer transition-colors group ${
+                                pressName === p
+                                  ? 'bg-amber-500/10 text-amber-300 font-semibold'
+                                  : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+                              }`}
+                            >
+                              <div
+                                onClick={() => handleSelectPress(p)}
+                                className="flex-1 flex items-center gap-2 truncate"
+                              >
+                                <span className="truncate">{p}</span>
+                                {pressName === p && <Check className="w-3.5 h-3.5 text-amber-400 shrink-0" />}
+                              </div>
+
+                              {onDeletePress && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setDeleteConfirmTarget({
+                                      category: 'press',
+                                      idOrName: p,
+                                      label: p,
+                                    });
+                                  }}
+                                  className="p-1 text-slate-500 hover:text-rose-400 hover:bg-slate-700/50 rounded transition-colors opacity-70 group-hover:opacity-100 ml-2"
+                                  title={`Delete saved press "${p}"`}
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                            </div>
+                          ))
+                        ) : (
+                          <div className="p-3 text-center text-xs text-slate-400">
+                            <span>No saved presses match "{pressSearch}".</span>
+                            <p className="text-[11px] text-slate-500 mt-1">
+                              Only saved items are shown in search.
+                            </p>
+                          </div>
+                        )}
+                      </div>
                     </div>
+                  )}
+
+                  {/* Press Run Proof / Plate Photo Upload with Drag and Drop */}
+                  <div className="pt-2">
+                    <PhotoDropzone
+                      value={pressPhotoUrl}
+                      onChange={(url) => setPressPhotoUrl(url)}
+                      onClear={() => setPressPhotoUrl('')}
+                      label="Press Proof / Artwork Photo (Optional)"
+                      placeholder="Drag & drop press proof or artwork photo or click to browse"
+                      accentColor="amber"
+                    />
                   </div>
-                )}
-
-                {/* Press Run Proof / Plate Photo Upload with Drag and Drop */}
-                <div className="pt-2">
-                  <PhotoDropzone
-                    value={pressPhotoUrl}
-                    onChange={(url) => setPressPhotoUrl(url)}
-                    onClear={() => setPressPhotoUrl('')}
-                    label="Press Proof / Artwork Photo (Optional)"
-                    placeholder="Drag & drop press proof or artwork photo or click to browse"
-                    accentColor="amber"
-                  />
                 </div>
-              </div>
-            )}
-          </div>
+              )}
+            </div>
+          )}
 
-          {/* 6. QUANTITY (measurement unit removed as requested) */}
+          {/* 6. QUANTITY (measurement unit is KGs for Reel, Units for Board Stock) */}
           <div>
-            <label className="block text-xs font-semibold text-slate-200 mb-1.5">
-              Stock Quantity <span className="text-amber-400">*</span>
-            </label>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="block text-xs font-semibold text-slate-200">
+                {activeCategory === 'Reel' ? 'Reel Weight / Quantity (KGs)' : 'Stock Quantity'}{' '}
+                <span className="text-amber-400">*</span>
+              </label>
+              {activeCategory === 'Reel' && (
+                <span className="text-[10px] font-mono text-sky-400 bg-sky-950/70 border border-sky-800/60 px-2 py-0.5 rounded font-bold">
+                  Weight in KGs (Kilograms)
+                </span>
+              )}
+            </div>
             <div className="relative">
               <Hash className="w-4 h-4 text-slate-500 absolute left-3 top-2.5" />
               <input
@@ -1812,35 +1965,44 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
                 required
                 value={quantity}
                 onChange={(e) => setQuantity(Number(e.target.value))}
-                placeholder="Enter stock quantity..."
-                className="w-full pl-9 pr-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-xs text-white focus:outline-none focus:border-amber-500 font-mono"
+                placeholder={activeCategory === 'Reel' ? 'Enter reel weight in KGs (e.g. 1500)...' : 'Enter stock quantity...'}
+                className="w-full pl-9 pr-14 py-2 bg-slate-950 border border-slate-800 rounded-xl text-xs text-white focus:outline-none focus:border-amber-500 font-mono"
               />
+              {activeCategory === 'Reel' && (
+                <span className="absolute right-3.5 top-2 text-xs font-mono font-bold text-sky-400">
+                  KGs
+                </span>
+              )}
             </div>
           </div>
 
           {/* Notes */}
           <div>
             <label className="block text-xs font-medium text-slate-300 mb-1">
-              Stock Notes (Optional)
+              {activeCategory === 'Reel' ? 'Paper Reel Notes (Optional)' : 'Stock Notes (Optional)'}
             </label>
             <input
               type="text"
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
-              placeholder="e.g. Moisture rating < 8%, top liner bundle #4..."
+              placeholder={activeCategory === 'Reel' ? 'e.g. Reel #12, core diameter 76mm, moisture < 7%...' : 'e.g. Moisture rating < 8%, top liner bundle #4...'}
               className="w-full px-3.5 py-2 bg-slate-950 border border-slate-800 rounded-xl text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-amber-500"
             />
           </div>
 
-          {/* OPTION FOR ADDING MULTIPLE STOCK FOR JOBS */}
+          {/* OPTION FOR ADDING MULTIPLE STOCK / REELS FOR JOBS */}
           <div className="pt-2">
             <button
               type="button"
               onClick={handleAddCurrentStockToQueue}
-              className="w-full py-2.5 px-4 bg-slate-800 hover:bg-slate-700 active:bg-slate-700 text-amber-300 border border-amber-500/30 rounded-xl text-xs font-semibold flex items-center justify-center gap-2 transition-colors cursor-pointer"
+              className={`w-full py-2.5 px-4 rounded-xl text-xs font-semibold flex items-center justify-center gap-2 transition-colors cursor-pointer border ${
+                activeCategory === 'Reel'
+                  ? 'bg-sky-950/60 hover:bg-sky-900/60 active:bg-sky-900 text-sky-300 border-sky-800/80'
+                  : 'bg-slate-800 hover:bg-slate-700 active:bg-slate-700 text-amber-300 border-amber-500/30'
+              }`}
             >
-              <PackagePlus className="w-4 h-4 text-amber-400" />
-              <span>+ Add Another Stock Item for this Job</span>
+              <PackagePlus className="w-4 h-4" />
+              <span>{activeCategory === 'Reel' ? '+ Add Another Paper Reel to Queue' : '+ Add Another Stock Item for this Job'}</span>
             </button>
           </div>
 

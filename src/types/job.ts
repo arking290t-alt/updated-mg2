@@ -42,6 +42,7 @@ export interface InventoryItem {
   isPrinted: boolean;
   pressName?: string;
   quantity: number;
+  unit?: string; // 'KGs' | 'Sheets' | 'Units'
   jobId?: string;
   jobName?: string;
   jobType?: string;
@@ -49,7 +50,7 @@ export interface InventoryItem {
   status: 'Received' | 'Not Received' | 'In Transit' | 'Used';
   isUrgent?: boolean;
   notes?: string;
-  category?: 'Stock' | 'Die';
+  category?: 'Stock' | 'Die' | 'Reel';
   dieMaker?: string;
   punchType?: string;
   photoUrl?: string; // Optional photo for die tooling or stock
@@ -60,6 +61,7 @@ export interface InventoryItem {
   usedAt?: string; // Exact timestamp when stock was marked as used
   usedJobId?: string; // Linked job ID
   usedJobName?: string; // Job Name stock was consumed for
+  usedJobType?: string; // Job Type stock was consumed for
   usedJobDescription?: string; // Job description / notes on stock consumption
 }
 
@@ -82,8 +84,9 @@ export interface StockItemEntry {
   isPrinted: boolean;
   pressName?: string;
   quantity: number;
+  unit?: string;
   notes?: string;
-  category?: 'Stock' | 'Die';
+  category?: 'Stock' | 'Die' | 'Reel';
   dieMaker?: string;
   punchType?: string;
   jobId?: string;
@@ -100,6 +103,7 @@ export interface StockItemEntry {
   usedAt?: string;
   usedJobId?: string;
   usedJobName?: string;
+  usedJobType?: string;
   usedJobDescription?: string;
 }
 

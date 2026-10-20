@@ -21,7 +21,8 @@ import {
   COMMON_SUPPLIERS, 
   INITIAL_PRESS_NAMES,
   INITIAL_DIE_MAKERS,
-  INITIAL_PUNCH_TYPES
+  INITIAL_PUNCH_TYPES,
+  formatReceivedTimestamp
 } from '../types/job';
 
 export enum OperationType {
@@ -461,13 +462,143 @@ export async function addJobToFirestore(job: CorrugationJob): Promise<void> {
   }
 }
 
+/**
+ * Automatically marks all inventory stock (raw board, paper reel, die tooling)
+ * attached to a job as 'Used' when the job is completed.
+ */
+export async function markAttachedStockUsedForJob(
+  jobId: string,
+  jobName?: string,
+  jobType?: string,
+  notes?: string,
+  completedAt?: string
+): Promise<void> {
+  const currentInv = getPersistedInventory();
+  const currentJobs = getPersistedJobs();
+  const job = currentJobs.find((j) => j.id === jobId);
+  const targetJobName = (jobName || job?.jobName || '').trim().toLowerCase();
+  const timestamp = completedAt || formatReceivedTimestamp();
+  const jobDesc = notes || job?.notes || jobType || job?.jobType || 'Completed with Job';
+
+  // Find all items linked by jobId OR jobName that are not already marked used
+  const matchingItems = currentInv.filter((item) => {
+    if (item.isUsed) return false;
+    const matchesId = item.jobId && item.jobId === jobId;
+    const matchesName = targetJobName && item.jobName && item.jobName.trim().toLowerCase() === targetJobName;
+    return matchesId || matchesName;
+  });
+
+  if (matchingItems.length === 0) return;
+
+  // 1. Immediately update in local persistent storage
+  const updatedInv = currentInv.map((item) => {
+    const matchesId = item.jobId && item.jobId === jobId;
+    const matchesName = targetJobName && item.jobName && item.jobName.trim().toLowerCase() === targetJobName;
+    if (!item.isUsed && (matchesId || matchesName)) {
+      return {
+        ...item,
+        isUsed: true,
+        status: 'Used' as const,
+        usedAt: timestamp,
+        usedJobId: jobId,
+        usedJobName: job?.jobName || item.jobName || targetJobName,
+        usedJobDescription: jobDesc,
+      };
+    }
+    return item;
+  });
+  savePersistedInventory(updatedInv);
+
+  // 2. Sync each item to Firestore
+  for (const item of matchingItems) {
+    try {
+      const payload = cleanFirestoreData({
+        isUsed: true,
+        status: 'Used',
+        usedAt: timestamp,
+        usedJobId: jobId,
+        usedJobName: job?.jobName || item.jobName || targetJobName,
+        usedJobDescription: jobDesc,
+        updatedAt: new Date().toISOString(),
+      });
+      await setDoc(doc(db, INVENTORY_COLLECTION, item.id), payload, { merge: true });
+    } catch (err) {
+      console.warn(`Firestore setDoc for inventory item ${item.id} failed:`, err);
+    }
+  }
+}
+
+/**
+ * Reverts inventory items previously marked used by this specific jobId back to active inventory.
+ */
+export async function unmarkAttachedStockUsedForJob(jobId: string): Promise<void> {
+  const currentInv = getPersistedInventory();
+  const autoUsedItems = currentInv.filter((i) => i.isUsed && i.usedJobId === jobId);
+  if (autoUsedItems.length === 0) return;
+
+  const updatedInv = currentInv.map((item) => {
+    if (item.isUsed && item.usedJobId === jobId) {
+      return {
+        ...item,
+        isUsed: false,
+        status: (item.receivedAt ? 'Received' : 'Not Received') as any,
+        usedAt: undefined,
+        usedJobId: undefined,
+        usedJobName: undefined,
+        usedJobDescription: undefined,
+      };
+    }
+    return item;
+  });
+  savePersistedInventory(updatedInv);
+
+  for (const item of autoUsedItems) {
+    try {
+      const payload = cleanFirestoreData({
+        isUsed: false,
+        status: item.receivedAt ? 'Received' : 'Not Received',
+        usedAt: null,
+        usedJobId: null,
+        usedJobName: null,
+        usedJobDescription: null,
+        updatedAt: new Date().toISOString(),
+      });
+      await setDoc(doc(db, INVENTORY_COLLECTION, item.id), payload, { merge: true });
+    } catch (err) {
+      console.warn(`Firestore setDoc revert for inventory item ${item.id} failed:`, err);
+    }
+  }
+}
+
+/**
+ * Scans all inventory items and completed jobs; if any stock is attached to a
+ * completed job but hasn't been marked as used yet, marks it as used.
+ */
+export async function reconcileCompletedJobsInventory(): Promise<void> {
+  const currentJobs = getPersistedJobs();
+  const completedJobs = currentJobs.filter((j) => j.status === 'Completed');
+  if (completedJobs.length === 0) return;
+
+  for (const job of completedJobs) {
+    await markAttachedStockUsedForJob(job.id, job.jobName, job.jobType, job.notes, job.completedAt);
+  }
+}
+
 export async function updateJobStatusInFirestore(jobId: string, status: JobStatus, completedAt?: string): Promise<void> {
   // 1. Immediately update in local persistent storage
   const currentJobs = getPersistedJobs();
   const updatedJobs = currentJobs.map((j) => (j.id === jobId ? { ...j, status, ...(status === 'Completed' && completedAt ? { completedAt } : {}) } : j));
   savePersistedJobs(updatedJobs);
 
-  // 2. Sync to Firestore
+  // 2. If status is Completed, immediately mark all attached stock as used
+  if (status === 'Completed') {
+    const targetJob = currentJobs.find((j) => j.id === jobId);
+    await markAttachedStockUsedForJob(jobId, targetJob?.jobName, targetJob?.jobType, targetJob?.notes, completedAt);
+  } else if (status === 'Pending') {
+    await unmarkAttachedStockUsedForJob(jobId);
+  }
+
+  // 3. Sync to Firestore
   try {
     const payload: any = {
       status,
@@ -500,7 +631,21 @@ export async function updateJobDetailsInFirestore(
   const updatedJobs = currentJobs.map((j) => (j.id === jobId ? { ...j, ...cleanUpdates } : j));
   savePersistedJobs(updatedJobs);
 
-  // 2. Sync to Firestore
+  // 2. If status is Completed, immediately mark all attached stock as used
+  if (cleanUpdates.status === 'Completed') {
+    const targetJob = existingJob || currentJobs.find((j) => j.id === jobId);
+    await markAttachedStockUsedForJob(
+      jobId,
+      cleanUpdates.jobName || targetJob?.jobName,
+      cleanUpdates.jobType || targetJob?.jobType,
+      cleanUpdates.notes || targetJob?.notes,
+      cleanUpdates.completedAt
+    );
+  } else if (cleanUpdates.status === 'Pending') {
+    await unmarkAttachedStockUsedForJob(jobId);
+  }
+
+  // 3. Sync to Firestore
   try {
     const payload: any = {
       ...cleanUpdates,
@@ -621,6 +766,7 @@ export function subscribeToInventory(
           isUrgent: Boolean(data.isUrgent),
           notes: data.notes || '',
           category: data.category || 'Stock',
+          unit: data.unit || undefined,
           dieMaker: data.dieMaker || undefined,
           punchType: data.punchType || undefined,
           photoUrl: data.photoUrl || undefined,
@@ -655,8 +801,38 @@ export function subscribeToInventory(
         (b.orderedAt || '').localeCompare(a.orderedAt || '')
       );
 
-      savePersistedInventory(finalInv);
-      onUpdate(finalInv);
+      // Auto-reconcile with completed jobs: If any stock is attached to a completed job, mark it as used
+      const currentJobs = getPersistedJobs();
+      const completedJobMap = new Map<string, CorrugationJob>();
+      currentJobs.filter((j) => j.status === 'Completed').forEach((j) => {
+        completedJobMap.set(j.id, j);
+        if (j.jobName) {
+          completedJobMap.set(j.jobName.trim().toLowerCase(), j);
+        }
+      });
+
+      const reconciledInv = finalInv.map((inv) => {
+        if (!inv.isUsed) {
+          const matchedJob =
+            (inv.jobId && completedJobMap.get(inv.jobId)) ||
+            (inv.jobName && completedJobMap.get(inv.jobName.trim().toLowerCase()));
+          if (matchedJob) {
+            return {
+              ...inv,
+              isUsed: true,
+              status: 'Used' as const,
+              usedAt: matchedJob.completedAt || inv.usedAt || formatReceivedTimestamp(),
+              usedJobId: matchedJob.id,
+              usedJobName: matchedJob.jobName,
+              usedJobDescription: matchedJob.notes || matchedJob.jobType || 'Completed with Job',
+            };
+          }
+        }
+        return inv;
+      });
+
+      savePersistedInventory(reconciledInv);
+      onUpdate(reconciledInv);
     },
     (err) => {
       const wrappedError = handleFirestoreError(err, OperationType.LIST, INVENTORY_COLLECTION);
@@ -682,14 +858,43 @@ export async function addInventoryItemsToFirestore(
   });
   localStorage.setItem(MG_DELETED_INVENTORY_KEY, JSON.stringify(Array.from(deletedIds)));
 
-  // 2. Immediately save inventory to local persistent storage
+  // 2. Check if any added stock is ordered for an already-completed job: if so, mark it as used
+  const currentJobs = getPersistedJobs();
+  const completedJobsMap = new Map<string, CorrugationJob>();
+  currentJobs.filter((j) => j.status === 'Completed').forEach((j) => {
+    completedJobsMap.set(j.id, j);
+    if (j.jobName) {
+      completedJobsMap.set(j.jobName.trim().toLowerCase(), j);
+    }
+  });
+
+  const processedItems: InventoryItem[] = items.map((it) => {
+    const matchedJob =
+      (it.jobId && completedJobsMap.get(it.jobId)) ||
+      (it.jobName && completedJobsMap.get(it.jobName.trim().toLowerCase())) ||
+      (jobId && completedJobsMap.get(jobId));
+
+    if (matchedJob && !it.isUsed) {
+      return {
+        ...it,
+        isUsed: true,
+        status: 'Used' as const,
+        usedAt: matchedJob.completedAt || formatReceivedTimestamp(),
+        usedJobId: matchedJob.id,
+        usedJobName: matchedJob.jobName,
+        usedJobDescription: matchedJob.notes || matchedJob.jobType || 'Ordered for Completed Job',
+      };
+    }
+    return it;
+  });
+
+  // 3. Immediately save inventory to local persistent storage
   const currentInv = getPersistedInventory();
-  const updatedInv = [...items, ...currentInv.filter((i) => !items.some((n) => n.id === i.id))];
+  const updatedInv = [...processedItems, ...currentInv.filter((i) => !processedItems.some((n) => n.id === i.id))];
   savePersistedInventory(updatedInv);
 
   // If tied to a job, update job locally as well
   if (jobId) {
-    const currentJobs = getPersistedJobs();
     const updatedJobs = currentJobs.map((j) =>
       j.id === jobId
         ? { ...j, hasInventory: true, inventoryCount: (j.inventoryCount || 0) + items.length }
@@ -698,10 +903,10 @@ export async function addInventoryItemsToFirestore(
     savePersistedJobs(updatedJobs);
   }
 
-  // 3. Sync to Firestore
+  // 4. Sync to Firestore
   try {
     const batch = writeBatch(db);
-    items.forEach((item) => {
+    processedItems.forEach((item) => {
       const docRef = doc(db, INVENTORY_COLLECTION, item.id);
       batch.set(docRef, item);
     });
@@ -748,7 +953,7 @@ export async function updateInventoryItemInFirestore(
 
   // 2. Sync to Firestore
   try {
-    const payload: any = { ...updates, updatedAt: new Date().toISOString() };
+    const payload: any = cleanFirestoreData({ ...updates, updatedAt: new Date().toISOString() });
     await setDoc(doc(db, INVENTORY_COLLECTION, itemId), payload, { merge: true });
   } catch (err) {
     console.warn(`Firestore setDoc for inventory ${itemId} failed, but saved locally:`, err);

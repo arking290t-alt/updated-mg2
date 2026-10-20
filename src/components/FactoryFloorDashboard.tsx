@@ -41,6 +41,8 @@ import {
   updateJobDetailsInFirestore,
   updateJobStatusInFirestore,
   updateInventoryItemInFirestore,
+  markAttachedStockUsedForJob,
+  reconcileCompletedJobsInventory,
 } from '../firebase/db';
 
 interface FactoryFloorDashboardProps {
@@ -118,6 +120,9 @@ export const FactoryFloorDashboard: React.FC<FactoryFloorDashboardProps> = ({ on
     const unsubInventory = subscribeToInventory((updatedInv) => {
       setInventory(updatedInv);
     });
+
+    // Automatically reconcile any stock attached to completed jobs
+    reconcileCompletedJobsInventory();
 
     return () => {
       unsubJobs();
@@ -302,6 +307,36 @@ export const FactoryFloorDashboard: React.FC<FactoryFloorDashboardProps> = ({ on
 
       await updateJobDetailsInFirestore(targetJob.id, payload);
 
+      if (allCompleted) {
+        await markAttachedStockUsedForJob(
+          targetJob.id,
+          targetJob.jobName,
+          targetJob.jobType,
+          targetJob.notes,
+          payload.completedAt
+        );
+
+        // Optimistically update local inventory state
+        setInventory((prev) =>
+          prev.map((it) => {
+            const matchesId = it.jobId && it.jobId === targetJob.id;
+            const matchesName = it.jobName && it.jobName.trim().toLowerCase() === targetJob.jobName.trim().toLowerCase();
+            if (!it.isUsed && (matchesId || matchesName)) {
+              return {
+                ...it,
+                isUsed: true,
+                status: 'Used',
+                usedAt: formatReceivedTimestamp(),
+                usedJobId: targetJob.id,
+                usedJobName: targetJob.jobName,
+                usedJobDescription: targetJob.notes || targetJob.jobType || 'Completed with Job',
+              };
+            }
+            return it;
+          })
+        );
+      }
+
       const stepName = currentSteps.find((s) => s.id === stepId)?.name || 'Process';
       if (allCompleted) {
         showNotification(`🎉 All processes finished for "${targetJob.jobName}"! Job is now marked as OK / COMPLETED.`);
@@ -416,6 +451,28 @@ export const FactoryFloorDashboard: React.FC<FactoryFloorDashboardProps> = ({ on
       }
 
       await updateJobDetailsInFirestore(job.id, payload);
+
+      await markAttachedStockUsedForJob(job.id, job.jobName, job.jobType, job.notes, nowIso);
+
+      // Optimistically update local inventory state
+      setInventory((prev) =>
+        prev.map((it) => {
+          const matchesId = it.jobId && it.jobId === job.id;
+          const matchesName = it.jobName && it.jobName.trim().toLowerCase() === job.jobName.trim().toLowerCase();
+          if (!it.isUsed && (matchesId || matchesName)) {
+            return {
+              ...it,
+              isUsed: true,
+              status: 'Used',
+              usedAt: formatReceivedTimestamp(),
+              usedJobId: job.id,
+              usedJobName: job.jobName,
+              usedJobDescription: job.notes || job.jobType || 'Completed with Job',
+            };
+          }
+          return it;
+        })
+      );
 
       showNotification(`✅ Job "${job.jobName}" successfully verified and marked as OK / COMPLETED!`);
       if (selectedJob && selectedJob.id === job.id) {

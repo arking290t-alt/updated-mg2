@@ -22,7 +22,15 @@ import {
   CheckSquare,
   RotateCcw,
   Archive,
-  Info
+  Info,
+  Download,
+  Disc,
+  AlertTriangle,
+  FileSpreadsheet,
+  Image as ImageIcon,
+  Check,
+  Edit3,
+  PackageCheck
 } from 'lucide-react';
 import { InventoryItem, CorrugationJob, formatReceivedTimestamp } from '../types/job';
 
@@ -41,8 +49,8 @@ export const ExistingInventoryView: React.FC<ExistingInventoryViewProps> = ({
   onDeleteInventory,
   onUpdateInventoryDetails,
 }) => {
-  // Tabs: Available Stock vs Used Stock
-  const [inventoryTab, setInventoryTab] = useState<'available' | 'used'>('available');
+  // Tabs: Available Stock vs Inventory without Jobs vs Used Stock
+  const [inventoryTab, setInventoryTab] = useState<'available' | 'without_jobs' | 'used'>('available');
 
   const [searchQuery, setSearchQuery] = useState('');
   const [dateFilter, setDateFilter] = useState('');
@@ -55,11 +63,23 @@ export const ExistingInventoryView: React.FC<ExistingInventoryViewProps> = ({
   const [detailItem, setDetailItem] = useState<InventoryItem | null>(null);
   const [previewImage, setPreviewImage] = useState<{ url: string; title: string } | null>(null);
 
+  // Receive Stock Modal (for Available Stock)
+  const [receiveModalItem, setReceiveModalItem] = useState<InventoryItem | null>(null);
+  const [receiveModalQty, setReceiveModalQty] = useState<number>(0);
+
+  // Edit Quantity Modal
+  const [editQtyModalItem, setEditQtyModalItem] = useState<InventoryItem | null>(null);
+  const [editQtyValue, setEditQtyValue] = useState<number>(0);
+
+  // Export Loading State
+  const [isExportingImage, setIsExportingImage] = useState(false);
+
   // Mark Stock As Used Modal State
   const [markUsedItem, setMarkUsedItem] = useState<InventoryItem | null>(null);
   const [jobSelectionMode, setJobSelectionMode] = useState<'existing_job' | 'custom'>('custom');
   const [selectedJobId, setSelectedJobId] = useState('');
   const [usedJobName, setUsedJobName] = useState('');
+  const [usedJobType, setUsedJobType] = useState('');
   const [usedJobDescription, setUsedJobDescription] = useState('');
   const [usedQuantity, setUsedQuantity] = useState<number>(0);
   const [usedAtTimestamp, setUsedAtTimestamp] = useState('');
@@ -70,6 +90,7 @@ export const ExistingInventoryView: React.FC<ExistingInventoryViewProps> = ({
   useEffect(() => {
     const handleClose = () => setActiveDropdownId(null);
     if (activeDropdownId) {
+      window.removeEventListener('click', handleClose);
       window.addEventListener('click', handleClose);
     }
     return () => window.removeEventListener('click', handleClose);
@@ -78,18 +99,76 @@ export const ExistingInventoryView: React.FC<ExistingInventoryViewProps> = ({
   const todayIso = new Date().toISOString().split('T')[0];
   const currentMonthIso = todayIso.slice(0, 7);
 
-  // Separate inventory into Available vs Used
-  const availableItems = inventory.filter((item) => !item.isUsed);
+  // Helper: check whether stock item is tied to a specific job
+  const hasAttachedJob = (item: InventoryItem): boolean => {
+    if (item.jobId && item.jobId.trim() !== '' && item.jobId !== 'custom') return true;
+    if (!item.jobName || item.jobName.trim() === '') return false;
+    const lower = item.jobName.trim().toLowerCase();
+    if (
+      lower === 'general buffer' ||
+      lower === 'no job' ||
+      lower.includes('(no job)') ||
+      lower.includes('buffer (no job)') ||
+      lower === 'general plant buffer' ||
+      lower === 'plant buffer (no job)'
+    ) {
+      return false;
+    }
+    return true;
+  };
+
+  // Separate inventory into Available vs Without Jobs vs Used
+  const availableItems = inventory.filter(
+    (item) => !item.isUsed && hasAttachedJob(item)
+  );
+
+  const withoutJobItems = inventory.filter(
+    (item) => !item.isUsed && !hasAttachedJob(item)
+  );
+
   const usedItems = inventory.filter((item) => Boolean(item.isUsed));
 
   // Filter Available Items
   const filteredAvailableItems = availableItems.filter((item) => {
     const matchesSearch =
       item.stockType.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      item.jobSize.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      item.receivingFrom.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (item.jobSize && item.jobSize.toLowerCase().includes(searchQuery.toLowerCase())) ||
+      (item.receivingFrom && item.receivingFrom.toLowerCase().includes(searchQuery.toLowerCase())) ||
       (item.pressName && item.pressName.toLowerCase().includes(searchQuery.toLowerCase())) ||
-      (item.jobName && item.jobName.toLowerCase().includes(searchQuery.toLowerCase()));
+      (item.jobName && item.jobName.toLowerCase().includes(searchQuery.toLowerCase())) ||
+      (item.dieMaker && item.dieMaker.toLowerCase().includes(searchQuery.toLowerCase())) ||
+      (item.punchType && item.punchType.toLowerCase().includes(searchQuery.toLowerCase()));
+
+    const matchesPrint =
+      printFilter === 'All'
+        ? true
+        : printFilter === 'Printed'
+        ? item.isPrinted
+        : !item.isPrinted;
+
+    if (dateFilter) {
+      const itemDate = (item.orderedAt || '').split(' ')[0];
+      if (itemDate !== dateFilter) return false;
+    }
+
+    if (monthFilter) {
+      const itemMonth = (item.orderedAt || '').slice(0, 7);
+      if (itemMonth !== monthFilter) return false;
+    }
+
+    return matchesSearch && matchesPrint;
+  });
+
+  // Filter Without Job Items
+  const filteredWithoutJobItems = withoutJobItems.filter((item) => {
+    const matchesSearch =
+      item.stockType.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (item.jobSize && item.jobSize.toLowerCase().includes(searchQuery.toLowerCase())) ||
+      (item.receivingFrom && item.receivingFrom.toLowerCase().includes(searchQuery.toLowerCase())) ||
+      (item.pressName && item.pressName.toLowerCase().includes(searchQuery.toLowerCase())) ||
+      (item.jobName && item.jobName.toLowerCase().includes(searchQuery.toLowerCase())) ||
+      (item.dieMaker && item.dieMaker.toLowerCase().includes(searchQuery.toLowerCase())) ||
+      (item.punchType && item.punchType.toLowerCase().includes(searchQuery.toLowerCase()));
 
     const matchesPrint =
       printFilter === 'All'
@@ -115,11 +194,14 @@ export const ExistingInventoryView: React.FC<ExistingInventoryViewProps> = ({
   const filteredUsedItems = usedItems.filter((item) => {
     const matchesSearch =
       item.stockType.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      item.jobSize.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      item.receivingFrom.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (item.jobSize && item.jobSize.toLowerCase().includes(searchQuery.toLowerCase())) ||
+      (item.receivingFrom && item.receivingFrom.toLowerCase().includes(searchQuery.toLowerCase())) ||
       (item.usedJobName && item.usedJobName.toLowerCase().includes(searchQuery.toLowerCase())) ||
+      (item.usedJobType && item.usedJobType.toLowerCase().includes(searchQuery.toLowerCase())) ||
       (item.usedJobDescription && item.usedJobDescription.toLowerCase().includes(searchQuery.toLowerCase())) ||
-      (item.jobName && item.jobName.toLowerCase().includes(searchQuery.toLowerCase()));
+      (item.jobName && item.jobName.toLowerCase().includes(searchQuery.toLowerCase())) ||
+      (item.dieMaker && item.dieMaker.toLowerCase().includes(searchQuery.toLowerCase())) ||
+      (item.punchType && item.punchType.toLowerCase().includes(searchQuery.toLowerCase()));
 
     const matchesPrint =
       printFilter === 'All'
@@ -145,9 +227,294 @@ export const ExistingInventoryView: React.FC<ExistingInventoryViewProps> = ({
   const totalAvailableQty = availableItems.reduce((acc, i) => acc + (Number(i.quantity) || 0), 0);
   const printedAvailableCount = availableItems.filter((i) => i.isPrinted).length;
   const nonPrintedAvailableCount = availableItems.filter((i) => !i.isPrinted).length;
+  const reelAvailableCount = availableItems.filter((i) => i.category === 'Reel').length;
+
+  const totalWithoutJobCount = withoutJobItems.length;
+  const urgentWithoutJobCount = withoutJobItems.filter((i) => Boolean(i.isUrgent)).length;
+  const reelWithoutJobCount = withoutJobItems.filter((i) => i.category === 'Reel').length;
+  const totalWithoutJobQty = withoutJobItems.reduce((acc, i) => acc + (Number(i.quantity) || 0), 0);
 
   const totalUsedQty = usedItems.reduce((acc, i) => acc + (Number(i.quantity) || 0), 0);
   const usedForJobsCount = usedItems.filter((i) => Boolean(i.usedJobName || i.jobName)).length;
+
+  // Toggle Urgent Priority
+  const handleToggleUrgent = async (item: InventoryItem) => {
+    if (!onUpdateInventoryDetails) return;
+    await onUpdateInventoryDetails(item.id, {
+      isUrgent: !item.isUrgent,
+    });
+  };
+
+  // Receive Stock Handlers
+  const handleOpenReceiveModal = (item: InventoryItem) => {
+    setReceiveModalItem(item);
+    setReceiveModalQty(Number(item.quantity) > 0 ? Number(item.quantity) : (item.category === 'Reel' ? 1000 : 500));
+  };
+
+  const handleConfirmReceive = async () => {
+    if (!receiveModalItem || !onUpdateInventoryDetails) return;
+    const qty = receiveModalQty > 0 ? receiveModalQty : (Number(receiveModalItem.quantity) || 100);
+    await onUpdateInventoryDetails(receiveModalItem.id, {
+      status: 'Received',
+      receivedAt: formatReceivedTimestamp(),
+      quantity: qty,
+      isExistingStock: true,
+    });
+    setReceiveModalItem(null);
+    setInventoryTab('available'); // Move to Available Stock to see received lot
+  };
+
+  // Edit Quantity Handlers
+  const handleOpenEditQty = (item: InventoryItem) => {
+    setEditQtyModalItem(item);
+    setEditQtyValue(Number(item.quantity) || 0);
+  };
+
+  const handleConfirmEditQty = async () => {
+    if (!editQtyModalItem || !onUpdateInventoryDetails) return;
+    await onUpdateInventoryDetails(editQtyModalItem.id, {
+      quantity: Math.max(0, editQtyValue),
+    });
+    setEditQtyModalItem(null);
+  };
+
+  // EXPORT 1: PNG IMAGE WITH WHOLE RED LINE FOR URGENT ITEMS (User Request 5 & 6)
+  const exportToImage = () => {
+    setIsExportingImage(true);
+    try {
+      const today = new Date().toISOString().split('T')[0];
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+
+      const itemsToRender =
+        inventoryTab === 'available'
+          ? filteredAvailableItems
+          : inventoryTab === 'without_jobs'
+          ? filteredWithoutJobItems
+          : filteredUsedItems;
+
+      const chartTitle =
+        inventoryTab === 'available'
+          ? 'Plant Inventory Report — Available Stock for Jobs'
+          : inventoryTab === 'without_jobs'
+          ? 'Plant Inventory Report — Inventory without Jobs (Buffer Lots)'
+          : 'Plant Inventory Report — Consumed & Used Stock Archive';
+
+      const fileDownloadName = `Inventory_${inventoryTab}_${today}.png`;
+      const accentColor =
+        inventoryTab === 'available'
+          ? '#f59e0b'
+          : inventoryTab === 'without_jobs'
+          ? '#0284c7'
+          : '#10b981';
+
+      const width = 1200;
+      const rowHeight = 44;
+      const headerHeight = 110;
+      const totalRows = Math.min(itemsToRender.length, 35);
+      const height = Math.max(340, headerHeight + totalRows * rowHeight + 65);
+
+      const scale = 2;
+      canvas.width = width * scale;
+      canvas.height = height * scale;
+      ctx.scale(scale, scale);
+
+      // Clean background
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, width, height);
+
+      // Outer border
+      ctx.strokeStyle = '#e2e8f0';
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(16, 16, width - 32, height - 32);
+
+      // Accent strip
+      ctx.fillStyle = accentColor;
+      ctx.fillRect(16, 16, width - 32, 5);
+
+      // Header title
+      ctx.fillStyle = '#0f172a';
+      ctx.font = 'bold 22px system-ui, -apple-system, sans-serif';
+      ctx.fillText(chartTitle, 36, 52);
+
+      ctx.fillStyle = '#64748b';
+      ctx.font = '12px system-ui, -apple-system, sans-serif';
+      ctx.fillText(`Generated: ${today}  ·  Corrugation & Converting Plant Operations Registry  ·  ${itemsToRender.length} Lots`, 36, 76);
+
+      const drawRoundRect = (x: number, y: number, w: number, h: number, radius: number, fill: string, stroke: string) => {
+        ctx.beginPath();
+        ctx.moveTo(x + radius, y);
+        ctx.lineTo(x + w - radius, y);
+        ctx.quadraticCurveTo(x + w, y, x + w, y + radius);
+        ctx.lineTo(x + w, y + h - radius);
+        ctx.quadraticCurveTo(x + w, y + h, x + w - radius, y + h);
+        ctx.lineTo(x + radius, y + h);
+        ctx.quadraticCurveTo(x, y + h, x, y + h - radius);
+        ctx.lineTo(x, y + radius);
+        ctx.quadraticCurveTo(x, y, x + radius, y);
+        ctx.closePath();
+        ctx.fillStyle = fill;
+        ctx.fill();
+        ctx.strokeStyle = stroke;
+        ctx.lineWidth = 1;
+        ctx.stroke();
+      };
+
+      // Table Header
+      let y = headerHeight;
+      ctx.fillStyle = '#f1f5f9';
+      ctx.fillRect(36, y - 18, width - 72, 32);
+      ctx.strokeStyle = '#cbd5e1';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(36, y - 18, width - 72, 32);
+
+      ctx.fillStyle = '#334155';
+      ctx.font = 'bold 11px system-ui, -apple-system, sans-serif';
+      ctx.fillText('PRIORITY', 48, y + 3);
+      ctx.fillText('CATEGORY / MATERIAL TYPE', 145, y + 3);
+      ctx.fillText('SPECIFICATION / SIZE', 440, y + 3);
+      ctx.fillText('QTY / UNIT', 620, y + 3);
+      ctx.fillText('SUPPLIER / VENDOR', 730, y + 3);
+      ctx.fillText('STATUS', 920, y + 3);
+      ctx.fillText('DATE', 1045, y + 3);
+
+      // Table Rows
+      itemsToRender.slice(0, 35).forEach((item, idx) => {
+        y += rowHeight;
+        const isUrgent = Boolean(item.isUrgent);
+
+        if (isUrgent) {
+          // WHOLE LINE MARKED AS RED FOR URGENT ITEMS (User Request 5)
+          ctx.fillStyle = '#fee2e2';
+          ctx.fillRect(36, y - 18, width - 72, rowHeight);
+
+          ctx.fillStyle = '#dc2626';
+          ctx.fillRect(36, y - 18, 6, rowHeight);
+
+          ctx.strokeStyle = '#ef4444';
+          ctx.lineWidth = 1.5;
+          ctx.strokeRect(36, y - 18, width - 72, rowHeight);
+        } else {
+          ctx.fillStyle = idx % 2 === 0 ? '#ffffff' : '#f8fafc';
+          ctx.fillRect(36, y - 18, width - 72, rowHeight);
+
+          ctx.strokeStyle = '#e2e8f0';
+          ctx.lineWidth = 0.8;
+          ctx.strokeRect(36, y - 18, width - 72, rowHeight);
+        }
+
+        // Priority Badge
+        if (isUrgent) {
+          drawRoundRect(48, y - 10, 80, 22, 6, '#dc2626', '#b91c1c');
+          ctx.fillStyle = '#ffffff';
+          ctx.font = 'bold 10px system-ui';
+          ctx.fillText('🔥 URGENT', 57, y + 5);
+        } else {
+          drawRoundRect(48, y - 10, 60, 22, 6, '#f1f5f9', '#e2e8f0');
+          ctx.fillStyle = '#64748b';
+          ctx.font = '10px system-ui';
+          ctx.fillText('Normal', 60, y + 5);
+        }
+
+        // Category & Stock Type
+        const catLabel = item.category === 'Reel' ? 'REEL' : item.category === 'Die' ? 'DIE' : 'BOARD';
+        ctx.fillStyle = isUrgent ? '#7f1d1d' : '#0284c7';
+        ctx.font = 'bold 9px monospace';
+        ctx.fillText(`[${catLabel}]`, 145, y + 5);
+
+        ctx.fillStyle = isUrgent ? '#991b1b' : '#0f172a';
+        ctx.font = 'bold 11px system-ui';
+        ctx.fillText((item.stockType || '').slice(0, 30), 195, y + 5);
+
+        // Size
+        ctx.fillStyle = isUrgent ? '#b91c1c' : '#475569';
+        ctx.font = '11px monospace';
+        ctx.fillText((item.jobSize || item.punchType || 'Standard').slice(0, 20), 440, y + 5);
+
+        // Quantity + Unit
+        const unitLabel = item.unit || (item.category === 'Reel' ? 'KGs' : 'Units');
+        ctx.fillStyle = isUrgent ? '#991b1b' : '#0f172a';
+        ctx.font = 'bold 11px monospace';
+        ctx.fillText(`${Number(item.quantity || 0).toLocaleString()} ${unitLabel}`, 620, y + 5);
+
+        // Supplier
+        ctx.fillStyle = isUrgent ? '#991b1b' : '#334155';
+        ctx.font = '11px system-ui';
+        ctx.fillText((item.receivingFrom || item.dieMaker || '').slice(0, 20), 730, y + 5);
+
+        // Status
+        const isRec = item.status === 'Received' || item.isExistingStock;
+        if (isRec) {
+          drawRoundRect(920, y - 10, 95, 22, 6, '#dcfce7', '#86efac');
+          ctx.fillStyle = '#15803d';
+          ctx.font = 'bold 10px system-ui';
+          ctx.fillText('✅ RECEIVED', 930, y + 5);
+        } else if (item.status === 'Used') {
+          drawRoundRect(920, y - 10, 95, 22, 6, '#f1f5f9', '#cbd5e1');
+          ctx.fillStyle = '#475569';
+          ctx.font = 'bold 10px system-ui';
+          ctx.fillText('USED STOCK', 930, y + 5);
+        } else {
+          drawRoundRect(920, y - 10, 105, 22, 6, isUrgent ? '#fef2f2' : '#fef3c7', isUrgent ? '#f87171' : '#fde68a');
+          ctx.fillStyle = isUrgent ? '#b91c1c' : '#b45309';
+          ctx.font = 'bold 10px system-ui';
+          ctx.fillText('⏳ NOT RECVD', 927, y + 5);
+        }
+
+        // Date
+        ctx.fillStyle = isUrgent ? '#b91c1c' : '#64748b';
+        ctx.font = '10px monospace';
+        ctx.fillText((item.orderedAt || item.usedAt || '').slice(0, 16), 1045, y + 5);
+      });
+
+      // Trigger download
+      const link = document.createElement('a');
+      link.download = fileDownloadName;
+      link.href = canvas.toDataURL('image/png');
+      link.click();
+    } catch (err) {
+      console.error('Failed to export inventory image:', err);
+    } finally {
+      setIsExportingImage(false);
+    }
+  };
+
+  // EXPORT 2: CSV SPREADSHEET
+  const exportToCsv = () => {
+    const today = new Date().toISOString().split('T')[0];
+    const itemsToRender =
+      inventoryTab === 'available'
+        ? filteredAvailableItems
+        : inventoryTab === 'without_jobs'
+        ? filteredWithoutJobItems
+        : filteredUsedItems;
+
+    const headers = ['Priority', 'Category', 'Material/Stock Type', 'Dimension/Size', 'Quantity', 'Unit', 'Supplier/Mill', 'Status', 'Order Date', 'Received Date', 'Linked Job', 'Notes'];
+    const rows = itemsToRender.map((it) => [
+      it.isUrgent ? 'URGENT' : 'NORMAL',
+      it.category || 'Stock',
+      `"${(it.stockType || '').replace(/"/g, '""')}"`,
+      `"${(it.jobSize || '').replace(/"/g, '""')}"`,
+      it.quantity || 0,
+      it.unit || (it.category === 'Reel' ? 'KGs' : 'Units'),
+      `"${(it.receivingFrom || it.dieMaker || '').replace(/"/g, '""')}"`,
+      it.status || 'Not Received',
+      `"${it.orderedAt || ''}"`,
+      `"${it.receivedAt || ''}"`,
+      `"${(it.jobName || it.usedJobName || '').replace(/"/g, '""')}"`,
+      `"${(it.notes || it.usedJobDescription || '').replace(/"/g, '""')}"`,
+    ]);
+
+    const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement('a');
+    link.setAttribute('href', encodedUri);
+    link.setAttribute('download', `Inventory_${inventoryTab}_${today}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
 
   // Open "Mark Stock As Used" Modal
   const handleOpenMarkUsed = (item: InventoryItem) => {
@@ -160,6 +527,7 @@ export const ExistingInventoryView: React.FC<ExistingInventoryViewProps> = ({
       setSelectedJobId(item.jobId);
       const matchedJob = jobs.find((j) => j.id === item.jobId);
       setUsedJobName(matchedJob?.jobName || item.jobName || '');
+      setUsedJobType(matchedJob?.jobType || item.jobType || '3-Ply Corrugated Box');
       setUsedJobDescription(
         matchedJob
           ? `${matchedJob.jobType}${matchedJob.boardSize ? ' • ' + matchedJob.boardSize : ''}${matchedJob.notes ? ' • ' + matchedJob.notes : ''}`
@@ -170,12 +538,14 @@ export const ExistingInventoryView: React.FC<ExistingInventoryViewProps> = ({
       const firstJob = jobs[0];
       setSelectedJobId(firstJob.id);
       setUsedJobName(firstJob.jobName);
+      setUsedJobType(firstJob.jobType || '3-Ply Corrugated Box');
       setUsedJobDescription(
         `${firstJob.jobType}${firstJob.boardSize ? ' • ' + firstJob.boardSize : ''}${firstJob.notes ? ' • ' + firstJob.notes : ''}`
       );
     } else {
       setJobSelectionMode('custom');
       setUsedJobName(item.jobName || '');
+      setUsedJobType(item.jobType || '3-Ply Corrugated Box');
       setUsedJobDescription(item.notes || '');
     }
   };
@@ -185,6 +555,7 @@ export const ExistingInventoryView: React.FC<ExistingInventoryViewProps> = ({
     const j = jobs.find((job) => job.id === jobId);
     if (j) {
       setUsedJobName(j.jobName);
+      setUsedJobType(j.jobType || '');
       setUsedJobDescription(
         `${j.jobType}${j.boardSize ? ' • ' + j.boardSize : ''}${j.notes ? ' • ' + j.notes : ''}`
       );
@@ -200,11 +571,17 @@ export const ExistingInventoryView: React.FC<ExistingInventoryViewProps> = ({
       return;
     }
 
+    if (!usedJobType.trim()) {
+      alert('Please specify a Job Type for this used stock.');
+      return;
+    }
+
     await onUpdateInventoryDetails(markUsedItem.id, {
       isUsed: true,
       status: 'Used',
       usedAt: usedAtTimestamp || formatReceivedTimestamp(),
       usedJobName: usedJobName.trim(),
+      usedJobType: usedJobType.trim(),
       usedJobDescription: usedJobDescription.trim(),
       usedJobId: jobSelectionMode === 'existing_job' ? selectedJobId : undefined,
       quantity: usedQuantity > 0 ? usedQuantity : markUsedItem.quantity,
@@ -239,7 +616,29 @@ export const ExistingInventoryView: React.FC<ExistingInventoryViewProps> = ({
           </p>
         </div>
 
-        <div className="flex items-center gap-2 self-start sm:self-auto">
+        <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
+          {/* Download Options */}
+          <button
+            type="button"
+            onClick={exportToImage}
+            disabled={isExportingImage}
+            className="px-3 py-2 text-xs font-semibold text-slate-200 bg-slate-900 hover:bg-slate-800 border border-slate-700 rounded-xl flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs disabled:opacity-50"
+            title="Download PNG image report with red line for urgent items"
+          >
+            <ImageIcon className="w-3.5 h-3.5 text-amber-400" />
+            <span>{isExportingImage ? 'Generating PNG...' : 'Download PNG'}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={exportToCsv}
+            className="px-3 py-2 text-xs font-semibold text-slate-200 bg-slate-900 hover:bg-slate-800 border border-slate-700 rounded-xl flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
+            title="Download CSV spreadsheet"
+          >
+            <Download className="w-3.5 h-3.5 text-emerald-400" />
+            <span>Download CSV</span>
+          </button>
+
           <button
             onClick={onOpenOrderModal}
             className="px-3.5 py-2 text-xs font-bold text-slate-950 bg-amber-500 hover:bg-amber-400 active:bg-amber-600 rounded-xl flex items-center gap-1.5 transition-colors cursor-pointer shadow-md"
@@ -250,8 +649,8 @@ export const ExistingInventoryView: React.FC<ExistingInventoryViewProps> = ({
         </div>
       </div>
 
-      {/* Primary Section Switcher Tabs: Available Stock vs Used Stock */}
-      <div className="flex items-center gap-2 p-1.5 bg-slate-950/80 border border-slate-800 rounded-2xl w-fit">
+      {/* Primary Section Switcher Tabs: Available Inventory vs Inventory without Stock vs Used Stock */}
+      <div className="flex flex-wrap items-center gap-2 p-1.5 bg-slate-950/80 border border-slate-800 rounded-2xl w-fit">
         <button
           type="button"
           onClick={() => setInventoryTab('available')}
@@ -262,11 +661,29 @@ export const ExistingInventoryView: React.FC<ExistingInventoryViewProps> = ({
           }`}
         >
           <Package className="w-4 h-4" />
-          <span>Available Stock</span>
+          <span>Available Inventory</span>
           <span className={`px-2 py-0.5 rounded-full text-[11px] font-mono ${
             inventoryTab === 'available' ? 'bg-slate-950/30 text-slate-950 font-black' : 'bg-slate-800 text-slate-300'
           }`}>
             {availableItems.length}
+          </span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setInventoryTab('without_jobs')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+            inventoryTab === 'without_jobs'
+              ? 'bg-sky-500 text-slate-950 shadow-md'
+              : 'text-slate-400 hover:text-white hover:bg-slate-900'
+          }`}
+        >
+          <Layers className="w-4 h-4" />
+          <span>Inventory without Jobs</span>
+          <span className={`px-2 py-0.5 rounded-full text-[11px] font-mono ${
+            inventoryTab === 'without_jobs' ? 'bg-slate-950/30 text-slate-950 font-black' : 'bg-slate-800 text-slate-300'
+          }`}>
+            {withoutJobItems.length}
           </span>
         </button>
 
@@ -627,7 +1044,412 @@ export const ExistingInventoryView: React.FC<ExistingInventoryViewProps> = ({
       )}
 
       {/* =================================================================== */}
-      {/* SECTION 2: USED STOCK (CONSUMED) - DEDICATED SEPARATE SECTION */}
+      {/* SECTION 2: INVENTORY WITHOUT JOBS (UNASSIGNED BUFFER STOCK) */}
+      {/* =================================================================== */}
+      {inventoryTab === 'without_jobs' && (
+        <div className="space-y-4 animate-in fade-in duration-150">
+          
+          {/* Header Banner & KPI Cards for Inventory without Jobs */}
+          <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+            <div className="p-3.5 rounded-xl bg-slate-900 border border-slate-800">
+              <span className="text-xs text-slate-400 block mb-1">Unassigned Lots</span>
+              <div className="text-2xl font-bold font-mono text-sky-400 tabular-nums">
+                {withoutJobItems.length}
+              </div>
+              <span className="text-xs text-slate-400 font-mono mt-0.5 block">
+                Ordered without job allocation
+              </span>
+            </div>
+
+            <div className="p-3.5 rounded-xl bg-slate-900 border border-slate-800">
+              <span className="text-xs text-slate-400 block mb-1">Total Buffer Quantity</span>
+              <div className="text-2xl font-bold font-mono text-white tabular-nums">
+                {totalWithoutJobQty.toLocaleString()}
+              </div>
+              <span className="text-xs text-slate-400 font-mono mt-0.5 block">
+                Available unassigned units / kgs
+              </span>
+            </div>
+
+            <div className="p-3.5 rounded-xl bg-slate-900 border border-slate-800">
+              <span className="text-xs text-slate-400 block mb-1">Urgent Priority</span>
+              <div className="text-2xl font-bold font-mono text-rose-500 tabular-nums flex items-center gap-1.5">
+                <Flame className="w-5 h-5 text-rose-500 fill-rose-500" />
+                <span>{urgentWithoutJobCount}</span>
+              </div>
+              <span className="text-xs text-rose-400/80 font-mono mt-0.5 block font-semibold">
+                Marked as critical priority
+              </span>
+            </div>
+
+            <div className="p-3.5 rounded-xl bg-slate-900 border border-slate-800">
+              <span className="text-xs text-slate-400 block mb-1">Paper Reels without Jobs</span>
+              <div className="text-2xl font-bold font-mono text-sky-400 tabular-nums flex items-center gap-1.5">
+                <Disc className="w-5 h-5 text-sky-400" />
+                <span>{reelWithoutJobCount}</span>
+              </div>
+              <span className="text-xs text-slate-400 font-mono mt-0.5 block">
+                Raw corrugation roll inventory
+              </span>
+            </div>
+          </div>
+
+          {/* Filter Bar */}
+          <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-2.5">
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 flex-1 max-w-3xl">
+              <div className="relative flex-1">
+                <Search className="w-4 h-4 text-slate-500 absolute left-3 top-2.5" />
+                <input
+                  type="text"
+                  placeholder="Search inventory without jobs by stock type, dimensions, vendor..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full pl-9 pr-4 py-2 bg-slate-900 border border-slate-800 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-sky-500 transition-colors"
+                />
+              </div>
+
+              {/* Month Filter */}
+              <div className="flex items-center gap-1.5 bg-slate-900 border border-slate-800 rounded-xl px-2.5 py-1.5 text-xs shrink-0">
+                <Calendar className="w-3.5 h-3.5 text-sky-400 shrink-0" />
+                <span className="text-[11px] text-slate-400 font-medium">Month:</span>
+                <input
+                  type="month"
+                  value={monthFilter}
+                  onChange={(e) => setMonthFilter(e.target.value)}
+                  className="bg-transparent text-white text-xs focus:outline-none [color-scheme:dark] cursor-pointer"
+                />
+                {monthFilter ? (
+                  <button
+                    type="button"
+                    onClick={() => setMonthFilter('')}
+                    title="Clear month filter"
+                    className="text-slate-400 hover:text-white p-0.5 rounded cursor-pointer"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setMonthFilter(currentMonthIso)}
+                    className="text-[10px] text-sky-400 hover:text-sky-300 font-semibold px-1.5 py-0.5 rounded bg-sky-950/40 border border-sky-800/40 cursor-pointer"
+                  >
+                    This Month
+                  </button>
+                )}
+              </div>
+
+              {/* Date Filter */}
+              <div className="flex items-center gap-1.5 bg-slate-900 border border-slate-800 rounded-xl px-2.5 py-1.5 text-xs shrink-0">
+                <Calendar className="w-3.5 h-3.5 text-sky-400 shrink-0" />
+                <span className="text-[11px] text-slate-400 font-medium">Date:</span>
+                <input
+                  type="date"
+                  value={dateFilter}
+                  onChange={(e) => setDateFilter(e.target.value)}
+                  className="bg-transparent text-white text-xs focus:outline-none [color-scheme:dark] cursor-pointer"
+                />
+                {dateFilter ? (
+                  <button
+                    type="button"
+                    onClick={() => setDateFilter('')}
+                    title="Clear date filter"
+                    className="text-slate-400 hover:text-white p-0.5 rounded cursor-pointer"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setDateFilter(todayIso)}
+                    className="text-[10px] text-sky-400 hover:text-sky-300 font-semibold px-1.5 py-0.5 rounded bg-sky-950/40 border border-sky-800/40 cursor-pointer"
+                  >
+                    Today
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Print Type Filter Tabs */}
+            <div className="flex items-center gap-1 overflow-x-auto pb-1 sm:pb-0">
+              {(['All', 'Printed', 'Non-Printed'] as const).map((filter) => (
+                <button
+                  key={filter}
+                  onClick={() => setPrintFilter(filter)}
+                  className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors cursor-pointer ${
+                    printFilter === filter
+                      ? 'bg-sky-500 text-slate-950 font-bold'
+                      : 'bg-slate-900 text-slate-400 hover:text-white border border-slate-800'
+                  }`}
+                >
+                  {filter}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Without Job Items List */}
+          {filteredWithoutJobItems.length === 0 ? (
+            <div className="p-12 text-center bg-slate-900 border border-slate-800 rounded-2xl">
+              <Layers className="w-12 h-12 text-sky-400/80 mx-auto mb-3" />
+              <h3 className="text-sm font-bold text-white">
+                {withoutJobItems.length === 0
+                  ? 'No Stock Ordered without Jobs'
+                  : 'No Matching Unassigned Stock Found'}
+              </h3>
+              <p className="text-xs text-slate-400 max-w-sm mx-auto mt-1 mb-4">
+                {withoutJobItems.length === 0
+                  ? 'All factory stock is currently allocated to specific jobs. New stock or paper reels ordered without attaching to a job will appear here, ready to be marked as used.'
+                  : 'No items in this section match your current search query or date filter.'}
+              </p>
+              <button
+                onClick={onOpenOrderModal}
+                className="px-4 py-2 text-xs font-bold text-slate-950 bg-sky-400 hover:bg-sky-300 rounded-xl transition-colors cursor-pointer inline-flex items-center gap-1.5"
+              >
+                <Plus className="w-4 h-4" />
+                <span>+ Order Stock / Reel without Job</span>
+              </button>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 gap-3.5">
+              {filteredWithoutJobItems.map((item) => {
+                const isUrgent = Boolean(item.isUrgent);
+                const isReel = item.category === 'Reel';
+                const isDie = item.category === 'Die';
+                const unitLabel = item.unit || (isReel ? 'KGs' : 'Units');
+
+                return (
+                  <div
+                    key={item.id}
+                    className={`p-5 rounded-2xl transition-all flex flex-col lg:flex-row lg:items-center justify-between gap-4 border ${
+                      isUrgent
+                        ? 'bg-rose-950/25 border-rose-500/60 shadow-lg shadow-rose-950/30'
+                        : 'bg-slate-900 border-slate-800 hover:border-slate-700'
+                    }`}
+                  >
+                    <div className="space-y-2">
+                      {/* Top Badges */}
+                      <div className="flex flex-wrap items-center gap-2">
+                        {/* Urgent Badge */}
+                        {isUrgent && (
+                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md text-[11px] font-bold bg-rose-500 text-white animate-pulse shadow-sm">
+                            <Flame className="w-3.5 h-3.5 fill-white" />
+                            <span>URGENT PRIORITY</span>
+                          </span>
+                        )}
+
+                        {/* Category Badge */}
+                        {isReel ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold bg-sky-500/20 text-sky-300 border border-sky-500/30">
+                            <Disc className="w-3 h-3 text-sky-400" />
+                            <span>Paper Reel</span>
+                          </span>
+                        ) : isDie ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                            <Scissors className="w-3 h-3 text-purple-400" />
+                            <span>Die Tooling</span>
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                            <Layers className="w-3 h-3 text-amber-400" />
+                            <span>Board Stock</span>
+                          </span>
+                        )}
+
+                        {/* Stock Type Title */}
+                        <span className={`font-mono text-base font-bold ${isUrgent ? 'text-rose-200' : 'text-white'}`}>
+                          {item.stockType}
+                        </span>
+
+                        {/* Print Status (for Board Stock) */}
+                        {!isReel && (
+                          <span
+                            className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md text-[11px] font-semibold ${
+                              item.isPrinted
+                                ? 'bg-amber-500/10 text-amber-300 border border-amber-500/30'
+                                : 'bg-slate-950 text-slate-300 border border-slate-800'
+                            }`}
+                          >
+                            {item.isPrinted ? <Printer className="w-3 h-3" /> : <FileText className="w-3 h-3" />}
+                            <span>{item.isPrinted ? `Printed (${item.pressName || 'Assigned'})` : 'Non-Printed'}</span>
+                          </span>
+                        )}
+
+                        {/* Unassigned Job Badge */}
+                        <span className="px-2.5 py-0.5 rounded text-[11px] font-mono font-semibold bg-sky-950/70 text-sky-300 border border-sky-800/70 flex items-center gap-1">
+                          <Layers className="w-3 h-3 text-sky-400" />
+                          <span>Without Job (Unassigned Buffer)</span>
+                        </span>
+                      </div>
+
+                      {/* Details Grid */}
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 sm:gap-4 text-xs font-mono text-slate-300">
+                        <div className="flex items-center gap-1.5">
+                          <Maximize2 className="w-3.5 h-3.5 text-slate-500" />
+                          <span>{isDie ? 'Punch Spec:' : isReel ? 'Reel Width / Spec:' : 'Board Size:'}{' '}
+                            <strong className="text-white">{item.jobSize || item.punchType || 'Standard'}</strong>
+                          </span>
+                        </div>
+
+                        <div className="flex items-center gap-1.5">
+                          <Truck className="w-3.5 h-3.5 text-slate-500" />
+                          <span>Supplier/Mill: <strong className="text-white">{item.receivingFrom || item.dieMaker || '—'}</strong></span>
+                        </div>
+
+                        <div className="flex items-center gap-1.5">
+                          <Briefcase className="w-3.5 h-3.5 text-sky-400" />
+                          <span>Allocation: <strong className="text-sky-300">Unassigned (Ready for use)</strong></span>
+                        </div>
+                      </div>
+
+                      {item.notes && (
+                        <p className="text-xs text-slate-400 italic">
+                          Note: {item.notes}
+                        </p>
+                      )}
+                    </div>
+
+                    {/* Quantity and Actions */}
+                    <div className="flex items-center justify-between lg:justify-end gap-3.5 shrink-0 pt-3 lg:pt-0 border-t lg:border-t-0 border-slate-800">
+                      <div className="text-left lg:text-right">
+                        <span className="text-[10px] text-slate-400 uppercase font-mono block">
+                          Available Qty
+                        </span>
+                        <span className={`text-xl font-bold font-mono tabular-nums ${isUrgent ? 'text-rose-300' : 'text-white'}`}>
+                          {Number(item.quantity || 0).toLocaleString()} <span className="text-xs font-normal text-slate-400">{unitLabel}</span>
+                        </span>
+                      </div>
+
+                      <div className="flex items-center gap-2 relative">
+                        {/* PROMINENT MARK USED ACTION (User Request: No mark receive option, only mark used with Job Name & Job Type) */}
+                        <button
+                          type="button"
+                          onClick={() => handleOpenMarkUsed(item)}
+                          className="px-3.5 py-1.5 text-xs font-bold text-slate-950 bg-amber-400 hover:bg-amber-300 active:bg-amber-500 rounded-lg transition-colors cursor-pointer flex items-center gap-1.5 shadow-sm"
+                          title="Mark stock as used and assign Job Name and Job Type"
+                        >
+                          <CheckSquare className="w-3.5 h-3.5 stroke-[2.5]" />
+                          <span>Mark Used</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => handleOpenEditQty(item)}
+                          className="px-2.5 py-1.5 text-xs font-semibold text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-lg transition-colors cursor-pointer flex items-center gap-1"
+                          title="Adjust quantity"
+                        >
+                          <Edit3 className="w-3.5 h-3.5 text-sky-400" />
+                          <span>Qty</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => setDetailItem(item)}
+                          className="px-2.5 py-1.5 text-xs font-semibold text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-lg transition-colors cursor-pointer flex items-center gap-1"
+                          title="Show Detail"
+                        >
+                          <Eye className="w-3.5 h-3.5 text-amber-400" />
+                          <span>Detail</span>
+                        </button>
+
+                        {/* 3-DOT BUTTON */}
+                        <div className="relative">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setActiveDropdownId(activeDropdownId === item.id ? null : item.id);
+                            }}
+                            className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
+                            title="More options"
+                          >
+                            <MoreVertical className="w-4 h-4" />
+                          </button>
+
+                          {/* DROPDOWN */}
+                          {activeDropdownId === item.id && (
+                            <div 
+                              onClick={(e) => e.stopPropagation()}
+                              className="absolute right-0 top-full mt-1 w-52 bg-slate-900 border border-slate-750 rounded-xl shadow-2xl z-30 py-1.5 animate-in fade-in zoom-in-95 duration-100 text-left"
+                            >
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setActiveDropdownId(null);
+                                  handleOpenMarkUsed(item);
+                                }}
+                                className="w-full px-3 py-2 text-xs font-semibold text-amber-300 hover:bg-amber-950/40 flex items-center gap-2 cursor-pointer transition-colors"
+                              >
+                                <CheckSquare className="w-3.5 h-3.5 text-amber-400" />
+                                <span>Mark Used for Job...</span>
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setActiveDropdownId(null);
+                                  handleOpenEditQty(item);
+                                }}
+                                className="w-full px-3 py-2 text-xs font-semibold text-sky-300 hover:bg-slate-800 flex items-center gap-2 cursor-pointer transition-colors"
+                              >
+                                <Edit3 className="w-3.5 h-3.5 text-sky-400" />
+                                <span>Edit Quantity...</span>
+                              </button>
+
+                              {onUpdateInventoryDetails && (
+                                <button
+                                  type="button"
+                                  onClick={async () => {
+                                    setActiveDropdownId(null);
+                                    await handleToggleUrgent(item);
+                                  }}
+                                  className="w-full px-3 py-2 text-xs font-medium text-slate-200 hover:text-white hover:bg-slate-800 flex items-center gap-2 cursor-pointer transition-colors"
+                                >
+                                  <Flame className={`w-3.5 h-3.5 ${item.isUrgent ? 'text-rose-400 fill-rose-400' : 'text-slate-400'}`} />
+                                  <span>{item.isUrgent ? 'Remove Urgent' : 'Mark Urgent 🔥'}</span>
+                                </button>
+                              )}
+
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setActiveDropdownId(null);
+                                  setDetailItem(item);
+                                }}
+                                className="w-full px-3 py-2 text-xs font-semibold text-slate-200 hover:bg-slate-800 flex items-center gap-2 cursor-pointer transition-colors"
+                              >
+                                <Eye className="w-3.5 h-3.5 text-slate-400" />
+                                <span>Show Detail</span>
+                              </button>
+
+                              <div className="my-1 border-t border-slate-800" />
+
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setActiveDropdownId(null);
+                                  setDeleteConfirmItem(item);
+                                }}
+                                className="w-full px-3 py-2 text-xs font-medium text-rose-400 hover:bg-rose-950/40 flex items-center gap-2 cursor-pointer transition-colors"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                                <span>Delete Record</span>
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* =================================================================== */}
+      {/* SECTION 3: USED STOCK (CONSUMED) - DEDICATED SEPARATE SECTION */}
       {/* =================================================================== */}
       {inventoryTab === 'used' && (
         <div className="space-y-4 animate-in fade-in duration-150">
@@ -820,6 +1642,11 @@ export const ExistingInventoryView: React.FC<ExistingInventoryViewProps> = ({
                       <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-bold bg-amber-500/15 text-amber-300 border border-amber-500/30">
                         <Briefcase className="w-3.5 h-3.5 text-amber-400" />
                         <span>Job: {item.usedJobName || item.jobName || 'Factory Production'}</span>
+                        {(item.usedJobType || item.jobType) && (
+                          <span className="text-[10px] text-amber-300/80 font-normal border-l border-amber-500/30 pl-1.5 ml-0.5">
+                            {item.usedJobType || item.jobType}
+                          </span>
+                        )}
                       </span>
 
                       {/* Used / Consumed Status */}
@@ -1075,19 +1902,46 @@ export const ExistingInventoryView: React.FC<ExistingInventoryViewProps> = ({
                 </div>
               )}
 
-              {/* Job Name Input */}
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-slate-300 block">
-                  Job Name <span className="text-rose-400">*</span>
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={usedJobName}
-                  onChange={(e) => setUsedJobName(e.target.value)}
-                  placeholder="e.g. Order #5092 - Heavy Duty Outer Box"
-                  className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-white text-xs placeholder-slate-500 focus:outline-none focus:border-amber-500"
-                />
+              {/* Job Name & Job Type Inputs */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-slate-300 block">
+                    Job Name <span className="text-rose-400">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={usedJobName}
+                    onChange={(e) => setUsedJobName(e.target.value)}
+                    placeholder="e.g. Order #5092 - Heavy Duty Outer Box"
+                    className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-white text-xs placeholder-slate-500 focus:outline-none focus:border-amber-500"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-slate-300 block">
+                    Job Type <span className="text-rose-400">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={usedJobType}
+                    onChange={(e) => setUsedJobType(e.target.value)}
+                    placeholder="e.g. 3-Ply Corrugated Box, Die-Cut Box..."
+                    list="job-types-markused-list"
+                    className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-white text-xs placeholder-slate-500 focus:outline-none focus:border-amber-500"
+                  />
+                  <datalist id="job-types-markused-list">
+                    <option value="3-Ply Corrugated Box" />
+                    <option value="5-Ply Heavy Duty Carton" />
+                    <option value="Die Cut Folding Box" />
+                    <option value="Duplex Board Box" />
+                    <option value="Offset Printed Carton" />
+                    <option value="7-Ply Industrial Carton" />
+                    <option value="Rigid Setup Box" />
+                    <option value="Tray / Wrap-around Carton" />
+                  </datalist>
+                </div>
               </div>
 
               {/* Job Description / Usage Details Textarea */}
@@ -1495,6 +2349,164 @@ export const ExistingInventoryView: React.FC<ExistingInventoryViewProps> = ({
           </div>
         </div>
       )}
+
+      {/* =================================================================== */}
+      {/* MODAL 5: RECEIVE INVENTORY STOCK LOT */}
+      {/* =================================================================== */}
+      {receiveModalItem && (() => {
+        const item = receiveModalItem;
+        const isReel = item.category === 'Reel';
+        const isDie = item.category === 'Die';
+        const unit = item.unit || (isReel ? 'KGs' : 'Units');
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-150">
+            <div className="w-full max-w-md bg-slate-900 border border-emerald-500/50 rounded-2xl p-6 shadow-2xl relative space-y-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center justify-center shrink-0">
+                  <PackageCheck className="w-5 h-5 stroke-[2.5]" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-white">Receive Stock Lot</h3>
+                  <p className="text-xs text-slate-400">Mark as arrived and add to Available Inventory</p>
+                </div>
+              </div>
+
+              {/* Item Info Summary */}
+              <div className="p-3.5 bg-slate-950 border border-slate-800 rounded-xl space-y-1.5 text-xs">
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-400">Stock Type:</span>
+                  <span className="font-bold text-white font-mono">{item.stockType}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-400">{isDie ? 'Punch Spec:' : isReel ? 'Reel Width:' : 'Board Size:'}</span>
+                  <span className="font-mono text-amber-300 font-semibold">{item.jobSize || item.punchType || 'Standard'}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-400">Supplier/Mill:</span>
+                  <span className="text-slate-200">{item.receivingFrom || item.dieMaker || '—'}</span>
+                </div>
+                {item.jobName && (
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-400">Linked Job:</span>
+                    <span className="text-amber-400 font-semibold">{item.jobName}</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Received Quantity Input */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-slate-200 block">
+                  Received Quantity ({unit}) <span className="text-emerald-400">*</span>
+                </label>
+                <div className="relative">
+                  <input
+                    type="number"
+                    min={1}
+                    value={receiveModalQty}
+                    onChange={(e) => setReceiveModalQty(Math.max(1, Number(e.target.value) || 0))}
+                    placeholder={`Enter received ${unit}...`}
+                    className="w-full px-3.5 py-2.5 bg-slate-950 border border-slate-800 focus:border-emerald-500 rounded-xl text-white text-sm font-mono focus:outline-none"
+                    autoFocus
+                  />
+                  <span className="absolute right-3.5 top-2.5 text-xs font-mono font-bold text-emerald-400">
+                    {unit}
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-400">
+                  This lot will be updated to "Received" status and moved to active Available Inventory.
+                </p>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex items-center justify-end gap-3 pt-2 border-t border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setReceiveModalItem(null)}
+                  className="px-4 py-2 text-xs font-medium text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-xl transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmReceive}
+                  className="px-4 py-2 text-xs font-bold text-slate-950 bg-emerald-400 hover:bg-emerald-300 active:bg-emerald-500 rounded-xl transition-colors cursor-pointer flex items-center gap-1.5 shadow-md"
+                >
+                  <Check className="w-4 h-4 stroke-[3]" />
+                  <span>Confirm Received</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* =================================================================== */}
+      {/* MODAL 6: EDIT INVENTORY QUANTITY */}
+      {/* =================================================================== */}
+      {editQtyModalItem && (() => {
+        const item = editQtyModalItem;
+        const isReel = item.category === 'Reel';
+        const unit = item.unit || (isReel ? 'KGs' : 'Units');
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-150">
+            <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl relative space-y-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-sky-500/20 text-sky-400 border border-sky-500/30 flex items-center justify-center shrink-0">
+                  <Edit3 className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-white">Adjust Stock Quantity</h3>
+                  <p className="text-xs text-slate-400">Update current counted units or kilograms</p>
+                </div>
+              </div>
+
+              <div className="p-3 bg-slate-950 border border-slate-800 rounded-xl text-xs space-y-1">
+                <div className="text-white font-bold font-mono">{item.stockType}</div>
+                <div className="text-slate-400 font-mono">{item.jobSize || item.punchType || 'Standard size'}</div>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-slate-200 block">
+                  New Quantity ({unit})
+                </label>
+                <div className="relative">
+                  <input
+                    type="number"
+                    min={0}
+                    value={editQtyValue}
+                    onChange={(e) => setEditQtyValue(Math.max(0, Number(e.target.value) || 0))}
+                    className="w-full px-3.5 py-2.5 bg-slate-950 border border-slate-800 focus:border-sky-500 rounded-xl text-white text-sm font-mono focus:outline-none"
+                    autoFocus
+                  />
+                  <span className="absolute right-3.5 top-2.5 text-xs font-mono font-bold text-sky-400">
+                    {unit}
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-400">
+                  Setting quantity to 0 will classify this item as out-of-stock.
+                </p>
+              </div>
+
+              <div className="flex items-center justify-end gap-3 pt-2 border-t border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setEditQtyModalItem(null)}
+                  className="px-4 py-2 text-xs font-medium text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-xl transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmEditQty}
+                  className="px-4 py-2 text-xs font-bold text-slate-950 bg-sky-400 hover:bg-sky-300 rounded-xl transition-colors cursor-pointer"
+                >
+                  Save Quantity
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
     </div>
   );

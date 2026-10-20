@@ -60,7 +60,8 @@ import {
   testFirestoreConnection,
   getPersistedJobs,
   getPersistedInventory,
-  getPersistedSettings
+  getPersistedSettings,
+  reconcileCompletedJobsInventory
 } from '../firebase/db';
 
 interface EmptyDashboardProps {
@@ -154,6 +155,9 @@ export const EmptyDashboard: React.FC<EmptyDashboardProps> = ({ onLogout }) => {
         console.warn('Settings Firestore listener warning:', error);
       }
     );
+
+    // Automatically reconcile any stock attached to completed jobs
+    reconcileCompletedJobsInventory();
 
     return () => {
       unsubJobs();
@@ -315,14 +319,30 @@ export const EmptyDashboard: React.FC<EmptyDashboardProps> = ({ onLogout }) => {
     const now = new Date();
     const timestamp = `${now.toISOString().split('T')[0]} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
     
-    const newItems: InventoryItem[] = orderList.map((order, idx) => ({
-      id: `inv-${Date.now()}-${idx}`,
-      ...order,
-      photoUrl: order.category === 'Die' ? order.photoUrl : undefined,
-      orderedAt: order.orderedAt || timestamp,
-      status: order.status || 'Not Received',
-      isUrgent: Boolean(order.isUrgent),
-    }));
+    const newItems: InventoryItem[] = orderList.map((order, idx) => {
+      const matchedJob = jobs.find(
+        (j) =>
+          (order.jobId && j.id === order.jobId) ||
+          (order.jobName && j.jobName.trim().toLowerCase() === order.jobName.trim().toLowerCase())
+      );
+      const isJobCompleted = matchedJob?.status === 'Completed' || Boolean(order.isUsed);
+
+      return {
+        id: `inv-${Date.now()}-${idx}`,
+        ...order,
+        photoUrl: order.category === 'Die' ? order.photoUrl : undefined,
+        orderedAt: order.orderedAt || timestamp,
+        status: isJobCompleted ? ('Used' as const) : order.status || 'Not Received',
+        isUrgent: Boolean(order.isUrgent),
+        isUsed: isJobCompleted,
+        usedAt: isJobCompleted ? (matchedJob?.completedAt || formatReceivedTimestamp()) : order.usedAt,
+        usedJobId: isJobCompleted ? (matchedJob?.id || order.jobId) : order.usedJobId,
+        usedJobName: isJobCompleted ? (matchedJob?.jobName || order.jobName) : order.usedJobName,
+        usedJobDescription: isJobCompleted
+          ? (matchedJob?.notes || matchedJob?.jobType || 'Ordered for Completed Job')
+          : order.usedJobDescription,
+      };
+    });
 
     // Optimistic local update
     setInventory((prev) => [...newItems, ...prev]);
