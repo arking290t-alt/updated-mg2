@@ -61,7 +61,8 @@ import {
   getPersistedJobs,
   getPersistedInventory,
   getPersistedSettings,
-  reconcileCompletedJobsInventory
+  reconcileCompletedJobsInventory,
+  syncLocalJobsAndInventoryToFirestore
 } from '../firebase/db';
 
 interface EmptyDashboardProps {
@@ -158,6 +159,9 @@ export const EmptyDashboard: React.FC<EmptyDashboardProps> = ({ onLogout }) => {
 
     // Automatically reconcile any stock attached to completed jobs
     reconcileCompletedJobsInventory();
+
+    // Ensure any offline local data is pushed to Firestore so all devices have it
+    syncLocalJobsAndInventoryToFirestore();
 
     return () => {
       unsubJobs();

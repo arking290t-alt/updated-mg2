@@ -14,29 +14,17 @@ service cloud.firestore {
 
     // Factory Production Jobs
     match /jobs/{jobId} {
-      allow read: if true;
-      allow create: if isValidId(jobId) 
-        && request.resource.data.jobName is string 
-        && request.resource.data.jobName.size() <= 200
-        && request.resource.data.status in ['Pending', 'Not Completed', 'Completed'];
-      allow update: if isValidId(jobId);
-      allow delete: if isValidId(jobId);
+      allow read, write: if true;
     }
 
     // Paper Reel & Converting Inventory Lots
     match /inventory/{inventoryId} {
-      allow read: if true;
-      allow create, update: if isValidId(inventoryId)
-        && request.resource.data.stockType is string
-        && request.resource.data.stockType.size() <= 150
-        && request.resource.data.quantity is number;
-      allow delete: if isValidId(inventoryId);
+      allow read, write: if true;
     }
 
     // Factory Config & Dropdowns (Job Types, Stock Types, Presses, Suppliers)
     match /settings/{settingId} {
-      allow read: if true;
-      allow write: if isValidId(settingId);
+      allow read, write: if true;
     }
 
     // Office Daybook Accounts & Ledger Entries

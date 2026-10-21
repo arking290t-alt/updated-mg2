@@ -7,8 +7,14 @@ import {
   deleteDoc,
   doc,
   getDoc,
+  setDoc,
 } from 'firebase/firestore';
 import { db } from '../firebase/config';
+import {
+  subscribeToDaybookPurposes,
+  addDaybookPurposeToFirestore,
+  deleteDaybookPurposeFromFirestore,
+} from '../firebase/db';
 import html2canvas from 'html2canvas';
 import {
   BookOpen,
@@ -32,6 +38,13 @@ import {
   Clock,
   ArrowUpRight,
   ArrowDownLeft,
+  BarChart3,
+  PieChart,
+  Tag,
+  Filter,
+  Download,
+  Search,
+  Bookmark,
 } from 'lucide-react';
 
 export interface DaybookAccount {
@@ -44,6 +57,7 @@ export interface DaybookEntry {
   id: string;
   name?: string;
   purpose?: string;
+  description?: string;
   amount: number;
   accountName: string;
   type: 'Dr' | 'Cr';
@@ -57,6 +71,7 @@ export interface DeletedDaybookEntry {
   id?: string;
   name?: string;
   purpose?: string;
+  description?: string;
   amount: number;
   accountName?: string;
   type: 'Dr' | 'Cr';
@@ -70,6 +85,8 @@ export interface DeletedDaybookEntry {
 export interface EditedDaybookEntry {
   id?: string;
   name?: string;
+  purpose?: string;
+  description?: string;
   before: number;
   after: number;
   date: string;
@@ -103,6 +120,8 @@ export const DaybookView: React.FC = () => {
   const [entryMode, setEntryMode] = useState<'normal' | 'transfer'>('normal');
   const [entryName, setEntryName] = useState('');
   const [purpose, setPurpose] = useState('');
+  const [entryDescription, setEntryDescription] = useState('');
+  const [savedPurposes, setSavedPurposes] = useState<string[]>([]);
   const [amount, setAmount] = useState('');
   const [entryDate, setEntryDate] = useState<string>(getTodayString());
   const [selectedAccount, setSelectedAccount] = useState('');
@@ -113,6 +132,12 @@ export const DaybookView: React.FC = () => {
   const [formError, setFormError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isCapturingSS, setIsCapturingSS] = useState(false);
+
+  // DATA Modal State (beside date selection at the top)
+  const [isDataModalOpen, setIsDataModalOpen] = useState(false);
+  const [dataSelectedMonth, setDataSelectedMonth] = useState<string>(() => new Date().toISOString().slice(0, 7));
+  const [dataViewFilter, setDataViewFilter] = useState<'month' | 'all'>('month');
+  const [dataSearchQuery, setDataSearchQuery] = useState('');
 
   // Modal Dialogs (PIN / Password / Prompts)
   const [promptModal, setPromptModal] = useState<{
@@ -160,6 +185,7 @@ export const DaybookView: React.FC = () => {
           id: d.id,
           name: data.name || '',
           purpose: data.purpose || '',
+          description: data.description || '',
           amount: Number(data.amount) || 0,
           accountName: data.accountName || '',
           type: data.type === 'Cr' ? 'Cr' : 'Dr',
@@ -170,6 +196,10 @@ export const DaybookView: React.FC = () => {
         });
       });
       setEntries(list);
+    });
+
+    const unsubPurposes = subscribeToDaybookPurposes((list) => {
+      setSavedPurposes(list);
     });
 
     const deletedCol = collection(db, 'deletedEntries');
@@ -193,6 +223,7 @@ export const DaybookView: React.FC = () => {
     return () => {
       unsubAccounts();
       unsubEntries();
+      unsubPurposes();
       unsubDeleted();
       unsubEdited();
     };
@@ -269,6 +300,71 @@ export const DaybookView: React.FC = () => {
     });
     return { totalDr, totalCr };
   }, [currentDayEntries]);
+
+  // Exclude automated stock, paper reel, and die tooling records from the DATA view
+  const isStockOrDieEntry = (e: DaybookEntry) => {
+    const p = (e.purpose || '').toLowerCase().trim();
+    const n = (e.name || '').toLowerCase().trim();
+    const d = (e.description || '').toLowerCase().trim();
+    const not = (e.note || '').toLowerCase().trim();
+    const combined = `${p} ${n} ${d} ${not}`;
+    const keywords = ['stock', 'die', 'dies', 'reel', 'paper reel', 'kraft', 'fluting', 'inventory'];
+    return keywords.some((k) => combined.includes(k));
+  };
+
+  // Purpose-wise financial data aggregation for the DATA option
+  const purposeWiseData = useMemo(() => {
+    const nonStockEntries = entries.filter((e) => {
+      // Exclude stock or die or inventory entries
+      if (isStockOrDieEntry(e)) return false;
+
+      // Filter by selected month if month filter active
+      if (dataViewFilter === 'month' && dataSelectedMonth) {
+        const entryMonth = (e.date || '').slice(0, 7);
+        if (entryMonth !== dataSelectedMonth) return false;
+      }
+      return true;
+    });
+
+    // Group by purpose
+    const map = new Map<string, { purpose: string; totalDr: number; totalCr: number; count: number }>();
+
+    nonStockEntries.forEach((e) => {
+      const p = (e.purpose || '').trim() || 'General / Unspecified';
+      const existing = map.get(p) || { purpose: p, totalDr: 0, totalCr: 0, count: 0 };
+      if (e.type === 'Dr') {
+        existing.totalDr += Number(e.amount) || 0;
+      } else {
+        existing.totalCr += Number(e.amount) || 0;
+      }
+      existing.count += 1;
+      map.set(p, existing);
+    });
+
+    const allRows = Array.from(map.values());
+
+    // Filter by search query if any
+    const filteredRows = dataSearchQuery.trim()
+      ? allRows.filter((r) => r.purpose.toLowerCase().includes(dataSearchQuery.trim().toLowerCase()))
+      : allRows;
+
+    // Sort descending by highest activity (totalDr + totalCr)
+    filteredRows.sort((a, b) => (b.totalDr + b.totalCr) - (a.totalDr + a.totalCr));
+
+    const totalDr = filteredRows.reduce((sum, r) => sum + r.totalDr, 0);
+    const totalCr = filteredRows.reduce((sum, r) => sum + r.totalCr, 0);
+    const netTotal = totalCr - totalDr;
+    const totalTransactions = filteredRows.reduce((sum, r) => sum + r.count, 0);
+
+    return {
+      rows: filteredRows,
+      totalDr,
+      totalCr,
+      netTotal,
+      totalTransactions,
+      totalPurposes: filteredRows.length,
+    };
+  }, [entries, dataViewFilter, dataSelectedMonth, dataSearchQuery]);
 
   // Update real account balance in Firestore
   const updateAccountBalanceInDb = async (
@@ -443,13 +539,20 @@ export const DaybookView: React.FC = () => {
         await addDoc(collection(db, 'entries'), {
           name: entryName.trim(),
           purpose: purpose.trim(),
+          description: entryDescription.trim(),
           amount: amt,
           accountName: selectedAccount,
           type: entryType,
           date: entryDate,
           note: note.trim(),
           transferGroup: null,
+          createdAt: new Date().toISOString(),
         });
+
+        // Automatically save purpose to saved list if non-empty
+        if (purpose.trim()) {
+          addDaybookPurposeToFirestore(purpose.trim());
+        }
 
         await updateAccountBalanceInDb(selectedAccount, entryType, amt);
       } else {
@@ -470,6 +573,7 @@ export const DaybookView: React.FC = () => {
         await addDoc(collection(db, 'entries'), {
           name: entryName.trim(),
           purpose: `Transfer to ${toAccount}`,
+          description: entryDescription.trim(),
           amount: amt,
           accountName: fromAccount,
           type: 'Dr',
@@ -477,11 +581,13 @@ export const DaybookView: React.FC = () => {
           note: note.trim(),
           transferGroup: groupId,
           transferPair: toAccount,
+          createdAt: new Date().toISOString(),
         });
 
         await addDoc(collection(db, 'entries'), {
           name: entryName.trim(),
           purpose: `Transfer from ${fromAccount}`,
+          description: entryDescription.trim(),
           amount: amt,
           accountName: toAccount,
           type: 'Cr',
@@ -489,6 +595,7 @@ export const DaybookView: React.FC = () => {
           note: note.trim(),
           transferGroup: groupId,
           transferPair: fromAccount,
+          createdAt: new Date().toISOString(),
         });
 
         await updateAccountBalanceInDb(fromAccount, 'Dr', amt);
@@ -498,12 +605,31 @@ export const DaybookView: React.FC = () => {
       // Reset entry inputs
       setEntryName('');
       setPurpose('');
+      setEntryDescription('');
       setAmount('');
       setNote('');
     } catch (err: any) {
       setFormError(err.message || 'Error adding entry');
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const handleSaveCurrentPurpose = async () => {
+    const trimmed = purpose.trim();
+    if (!trimmed) {
+      alert('Please type a purpose name first.');
+      return;
+    }
+    await addDaybookPurposeToFirestore(trimmed);
+  };
+
+  const handleDeleteSavedPurpose = async (pToDelete: string) => {
+    if (confirm(`Remove "${pToDelete}" from saved purposes?`)) {
+      await deleteDaybookPurposeFromFirestore(pToDelete);
+      if (purpose === pToDelete) {
+        setPurpose('');
+      }
     }
   };
 
@@ -773,6 +899,17 @@ export const DaybookView: React.FC = () => {
               className="bg-transparent text-white font-mono text-xs focus:outline-none cursor-pointer"
             />
           </div>
+
+          {/* DATA OPTION BUTTON (BESIDE DATE SELECTION) */}
+          <button
+            type="button"
+            onClick={() => setIsDataModalOpen(true)}
+            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs transition-all shadow-sm cursor-pointer"
+            title="Open purpose-wise Debit and Credit DATA summary"
+          >
+            <BarChart3 className="w-3.5 h-3.5 stroke-[2.5]" />
+            <span>DATA</span>
+          </button>
 
           <button
             type="button"
@@ -1091,7 +1228,7 @@ export const DaybookView: React.FC = () => {
             )}
 
             <form onSubmit={handleAddEntry} className="space-y-4">
-              {/* Row 1: Name, Purpose, Amount, Date */}
+              {/* Row 1: Name, Purpose (Save & Select), Amount, Date */}
               <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
                 <div>
                   <label className="block text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-1">
@@ -1106,17 +1243,50 @@ export const DaybookView: React.FC = () => {
                   />
                 </div>
 
+                {/* Purpose: Save & Select */}
                 <div>
-                  <label className="block text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-1">
-                    Purpose
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="e.g. Reel Purchase, Plant Tea, Dies..."
-                    value={purpose}
-                    onChange={(e) => setPurpose(e.target.value)}
-                    className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500"
-                  />
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
+                      Purpose
+                    </label>
+                    {purpose.trim() && !savedPurposes.some((p) => p.toLowerCase() === purpose.trim().toLowerCase()) && (
+                      <button
+                        type="button"
+                        onClick={handleSaveCurrentPurpose}
+                        className="text-[10px] text-amber-400 hover:text-amber-300 font-bold cursor-pointer flex items-center gap-0.5 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/30"
+                        title="Save this purpose to your list"
+                      >
+                        <Plus className="w-2.5 h-2.5" />
+                        <span>Save</span>
+                      </button>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <select
+                      value={savedPurposes.includes(purpose) ? purpose : ''}
+                      onChange={(e) => {
+                        if (e.target.value) {
+                          setPurpose(e.target.value);
+                        }
+                      }}
+                      className="w-1/2 px-2 py-2 bg-slate-900 border border-slate-800 rounded-xl text-[11px] text-slate-300 focus:outline-none focus:border-amber-500 cursor-pointer"
+                      title="Select saved purpose"
+                    >
+                      <option value="">Select...</option>
+                      {savedPurposes.map((p) => (
+                        <option key={p} value={p}>
+                          {p}
+                        </option>
+                      ))}
+                    </select>
+                    <input
+                      type="text"
+                      placeholder="Or custom..."
+                      value={purpose}
+                      onChange={(e) => setPurpose(e.target.value)}
+                      className="w-1/2 px-2.5 py-2 bg-slate-950 border border-slate-800 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500"
+                    />
+                  </div>
                 </div>
 
                 <div>
@@ -1147,6 +1317,22 @@ export const DaybookView: React.FC = () => {
                   />
                 </div>
               </div>
+
+              {/* Description Option for Normal Entry */}
+              {entryMode === 'normal' && (
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-1">
+                    Description <span className="text-slate-500 text-[10px] lowercase font-normal">(Details, invoice #, or breakdown)</span>
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="e.g. 500 pcs printed cartons, canteen tea for shift, motor bearing replacement..."
+                    value={entryDescription}
+                    onChange={(e) => setEntryDescription(e.target.value)}
+                    className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500"
+                  />
+                </div>
+              )}
 
               {/* Mode Dependent Fields */}
               {entryMode === 'normal' ? (
@@ -1309,6 +1495,7 @@ export const DaybookView: React.FC = () => {
                   <tr className="border-b border-slate-800 text-slate-400 text-[11px] font-mono uppercase bg-slate-950/60">
                     <th className="py-2.5 px-3 text-left font-semibold">Name</th>
                     <th className="py-2.5 px-3 text-left font-semibold">Purpose</th>
+                    <th className="py-2.5 px-3 text-left font-semibold">Description</th>
                     <th className="py-2.5 px-3 text-left font-semibold">Account</th>
                     <th className="py-2.5 px-3 text-right font-semibold text-rose-400">Debit (Dr)</th>
                     <th className="py-2.5 px-3 text-right font-semibold text-emerald-400">Credit (Cr)</th>
@@ -1325,11 +1512,14 @@ export const DaybookView: React.FC = () => {
                         <td className="py-2.5 px-3 font-semibold text-white">
                           <div className="flex items-center gap-1.5">
                             {isTransfer && <ArrowRightLeft className="w-3 h-3 text-amber-400 shrink-0" />}
-                            <span className="truncate max-w-[150px]">{e.name || '—'}</span>
+                            <span className="truncate max-w-[140px]">{e.name || '—'}</span>
                           </div>
                         </td>
                         <td className="py-2.5 px-3 text-slate-300">
-                          <span className="truncate max-w-[180px] inline-block">{e.purpose || '—'}</span>
+                          <span className="truncate max-w-[150px] inline-block font-medium">{e.purpose || '—'}</span>
+                        </td>
+                        <td className="py-2.5 px-3 text-slate-400">
+                          <span className="truncate max-w-[180px] inline-block">{e.description || '—'}</span>
                         </td>
                         <td className="py-2.5 px-3 font-mono text-slate-400">
                           <span className="px-1.5 py-0.5 rounded bg-slate-950 border border-slate-800 text-[11px] text-slate-300">
@@ -1388,6 +1578,7 @@ export const DaybookView: React.FC = () => {
                   <tr className="border-b border-slate-800 text-slate-400 text-[11px] font-mono uppercase bg-slate-950/60">
                     <th className="py-2.5 px-3 text-left font-semibold">Name</th>
                     <th className="py-2.5 px-3 text-left font-semibold">Purpose</th>
+                    <th className="py-2.5 px-3 text-left font-semibold">Description</th>
                     <th className="py-2.5 px-3 text-left font-semibold">Account</th>
                     <th className="py-2.5 px-3 text-right font-semibold text-rose-400">Debit (Dr)</th>
                     <th className="py-2.5 px-3 text-right font-semibold text-emerald-400">Credit (Cr)</th>
@@ -1400,6 +1591,7 @@ export const DaybookView: React.FC = () => {
                     <tr key={d.id || idx} className="hover:bg-slate-800/40 transition-colors text-slate-400">
                       <td className="py-2.5 px-3 text-slate-300 font-medium">{d.name || '—'}</td>
                       <td className="py-2.5 px-3">{d.purpose || '—'}</td>
+                      <td className="py-2.5 px-3">{d.description || '—'}</td>
                       <td className="py-2.5 px-3 font-mono">{d.accountName || '—'}</td>
                       <td className="py-2.5 px-3 text-right font-mono text-rose-400/80">
                         {d.type === 'Dr' ? `₹${Number(d.amount).toFixed(2)}` : ''}
@@ -1532,6 +1724,234 @@ export const DaybookView: React.FC = () => {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* =================================================================== */}
+      {/* DATA OPTION MODAL: PURPOSE-WISE DEBIT & CREDIT CONSOLIDATION */}
+      {/* =================================================================== */}
+      {isDataModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/85 backdrop-blur-md animate-in fade-in duration-150">
+          <div className="w-full max-w-4xl bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl overflow-hidden max-h-[92vh] flex flex-col">
+            
+            {/* Modal Header */}
+            <div className="px-6 py-4 border-b border-slate-800 flex items-center justify-between bg-slate-950/80 shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400">
+                  <BarChart3 className="w-5 h-5" />
+                </div>
+                <div>
+                  <h2 className="text-base font-bold text-white flex items-center gap-2">
+                    <span>Purpose Financial DATA</span>
+                    <span className="text-[10px] font-mono font-normal text-amber-400 bg-amber-950/60 px-2 py-0.5 rounded border border-amber-800/40">
+                      Non-Stock Purposes
+                    </span>
+                  </h2>
+                  <p className="text-xs text-slate-400">
+                    Consolidated Debit (Dr) and Credit (Cr) totals categorized by Purpose
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setIsDataModalOpen(false)}
+                className="p-1.5 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Filter Toolbar (Month Selection + Search) */}
+            <div className="p-4 border-b border-slate-800/80 bg-slate-950/50 flex flex-wrap items-center justify-between gap-3 shrink-0">
+              {/* Left: Month Selection */}
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="flex items-center p-0.5 bg-slate-900 border border-slate-800 rounded-xl text-xs">
+                  <button
+                    type="button"
+                    onClick={() => setDataViewFilter('month')}
+                    className={`px-3 py-1.5 rounded-lg font-semibold transition-colors cursor-pointer flex items-center gap-1.5 ${
+                      dataViewFilter === 'month'
+                        ? 'bg-amber-500 text-slate-950 shadow-xs'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    <Calendar className="w-3.5 h-3.5" />
+                    <span>Selected Month</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDataViewFilter('all')}
+                    className={`px-3 py-1.5 rounded-lg font-semibold transition-colors cursor-pointer flex items-center gap-1.5 ${
+                      dataViewFilter === 'all'
+                        ? 'bg-amber-500 text-slate-950 shadow-xs'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    <span>All Time</span>
+                  </button>
+                </div>
+
+                {dataViewFilter === 'month' && (
+                  <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-800 text-xs">
+                    <span className="text-[11px] font-mono text-slate-400 uppercase font-semibold">Month:</span>
+                    <input
+                      type="month"
+                      value={dataSelectedMonth}
+                      onChange={(e) => setDataSelectedMonth(e.target.value)}
+                      className="bg-transparent text-amber-400 font-mono font-bold text-xs focus:outline-none cursor-pointer"
+                    />
+                  </div>
+                )}
+              </div>
+
+              {/* Right: Search Filter */}
+              <div className="relative w-full sm:w-64">
+                <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+                <input
+                  type="text"
+                  placeholder="Filter by purpose name..."
+                  value={dataSearchQuery}
+                  onChange={(e) => setDataSearchQuery(e.target.value)}
+                  className="w-full pl-9 pr-3 py-1.5 bg-slate-900 border border-slate-800 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500"
+                />
+              </div>
+            </div>
+
+            {/* Quick KPI Overview Cards */}
+            <div className="p-4 grid grid-cols-2 sm:grid-cols-4 gap-3 bg-slate-900/40 border-b border-slate-800 shrink-0">
+              <div className="p-3 rounded-xl bg-slate-950/80 border border-slate-800 space-y-0.5">
+                <span className="text-[10px] font-mono text-slate-400 uppercase font-semibold">Total Purposes</span>
+                <div className="text-lg font-bold text-white font-mono">{purposeWiseData.totalPurposes}</div>
+                <span className="text-[10px] text-slate-500">{purposeWiseData.totalTransactions} transactions</span>
+              </div>
+
+              <div className="p-3 rounded-xl bg-rose-950/20 border border-rose-500/20 space-y-0.5">
+                <span className="text-[10px] font-mono text-rose-300 uppercase font-semibold">Total Debit (Dr)</span>
+                <div className="text-lg font-bold text-rose-400 font-mono">
+                  ₹{purposeWiseData.totalDr.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </div>
+                <span className="text-[10px] text-rose-400/70">Total Expenses</span>
+              </div>
+
+              <div className="p-3 rounded-xl bg-emerald-950/20 border border-emerald-500/20 space-y-0.5">
+                <span className="text-[10px] font-mono text-emerald-300 uppercase font-semibold">Total Credit (Cr)</span>
+                <div className="text-lg font-bold text-emerald-400 font-mono">
+                  ₹{purposeWiseData.totalCr.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </div>
+                <span className="text-[10px] text-emerald-400/70">Total Receipts</span>
+              </div>
+
+              <div className="p-3 rounded-xl bg-slate-950/80 border border-slate-800 space-y-0.5">
+                <span className="text-[10px] font-mono text-slate-400 uppercase font-semibold">Net Total</span>
+                <div className={`text-lg font-bold font-mono ${purposeWiseData.netTotal >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                  {purposeWiseData.netTotal >= 0 ? '+' : ''}₹{purposeWiseData.netTotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </div>
+                <span className="text-[10px] text-slate-500">{purposeWiseData.netTotal >= 0 ? 'Surplus' : 'Deficit'}</span>
+              </div>
+            </div>
+
+            {/* Purpose Table View */}
+            <div className="flex-1 overflow-y-auto p-4">
+              {purposeWiseData.rows.length === 0 ? (
+                <div className="p-12 text-center text-slate-500 text-xs border border-dashed border-slate-800 rounded-xl space-y-2">
+                  <BarChart3 className="w-8 h-8 text-slate-600 mx-auto" />
+                  <p className="font-semibold text-slate-300">No purpose data recorded for {dataViewFilter === 'month' ? dataSelectedMonth : 'all time'}.</p>
+                  <p className="text-[11px] text-slate-500 max-w-md mx-auto">
+                    Note: Automated stock, paper reel, and die tooling records are excluded from this operational summary.
+                  </p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto border border-slate-800 rounded-xl">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="border-b border-slate-800 text-slate-400 text-[11px] font-mono uppercase bg-slate-950/80">
+                        <th className="py-2.5 px-3 text-center font-semibold w-12">#</th>
+                        <th className="py-2.5 px-3 text-left font-semibold">Purpose Name</th>
+                        <th className="py-2.5 px-3 text-center font-semibold w-24">Txns</th>
+                        <th className="py-2.5 px-3 text-right font-semibold text-rose-400">Debit (Dr)</th>
+                        <th className="py-2.5 px-3 text-right font-semibold text-emerald-400">Credit (Cr)</th>
+                        <th className="py-2.5 px-3 text-right font-semibold text-slate-300">Net Balance</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-850">
+                      {purposeWiseData.rows.map((row, idx) => {
+                        const rowNet = row.totalCr - row.totalDr;
+                        return (
+                          <tr key={row.purpose} className="hover:bg-slate-800/40 transition-colors">
+                            <td className="py-2.5 px-3 text-center font-mono text-slate-500">{idx + 1}</td>
+                            <td className="py-2.5 px-3 font-semibold text-white">
+                              <span className="flex items-center gap-1.5">
+                                <Tag className="w-3 h-3 text-amber-400 shrink-0" />
+                                <span>{row.purpose}</span>
+                              </span>
+                            </td>
+                            <td className="py-2.5 px-3 text-center font-mono text-slate-400">
+                              <span className="px-1.5 py-0.5 rounded bg-slate-950 border border-slate-800 text-[10px]">
+                                {row.count}
+                              </span>
+                            </td>
+                            <td className="py-2.5 px-3 text-right font-mono font-bold text-rose-400">
+                              {row.totalDr > 0
+                                ? `₹${row.totalDr.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                                : '—'}
+                            </td>
+                            <td className="py-2.5 px-3 text-right font-mono font-bold text-emerald-400">
+                              {row.totalCr > 0
+                                ? `₹${row.totalCr.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                                : '—'}
+                            </td>
+                            <td className="py-2.5 px-3 text-right font-mono font-semibold">
+                              <span className={rowNet >= 0 ? 'text-emerald-400' : 'text-rose-400'}>
+                                {rowNet >= 0 ? '+' : ''}₹{rowNet.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                    {/* TOTAL AMOUNT AT BOTTOM */}
+                    <tfoot>
+                      <tr className="border-t-2 border-amber-500/40 bg-slate-950/90 font-bold text-white text-xs">
+                        <td colSpan={2} className="py-3 px-4 text-left font-mono uppercase tracking-wider text-amber-400">
+                          TOTAL AMOUNT (All Purposes)
+                        </td>
+                        <td className="py-3 px-3 text-center font-mono text-amber-300">
+                          {purposeWiseData.totalTransactions}
+                        </td>
+                        <td className="py-3 px-3 text-right font-mono text-rose-400 text-sm">
+                          ₹{purposeWiseData.totalDr.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </td>
+                        <td className="py-3 px-3 text-right font-mono text-emerald-400 text-sm">
+                          ₹{purposeWiseData.totalCr.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </td>
+                        <td className="py-3 px-3 text-right font-mono text-sm">
+                          <span className={purposeWiseData.netTotal >= 0 ? 'text-emerald-400' : 'text-rose-400'}>
+                            {purposeWiseData.netTotal >= 0 ? '+' : ''}₹{purposeWiseData.netTotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </span>
+                        </td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            {/* Modal Footer Note */}
+            <div className="px-6 py-3 border-t border-slate-800 bg-slate-950/80 flex items-center justify-between text-[11px] text-slate-500 shrink-0">
+              <span className="flex items-center gap-1.5">
+                <AlertCircle className="w-3.5 h-3.5 text-amber-400" />
+                <span>Automated inventory stock & die records are excluded from this report.</span>
+              </span>
+              <button
+                type="button"
+                onClick={() => setIsDataModalOpen(false)}
+                className="px-4 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold cursor-pointer transition-colors"
+              >
+                Close
+              </button>
+            </div>
           </div>
         </div>
       )}

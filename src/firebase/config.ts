@@ -1,5 +1,5 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
-import { getFirestore } from 'firebase/firestore';
+import { initializeFirestore } from 'firebase/firestore';
 
 // User-provided Firebase Configuration (mg-manager-3ab66)
 // Automatically falls back to user configuration, with support for Vercel environment variables
@@ -16,5 +16,8 @@ export const firebaseConfig = {
 // Initialize Firebase App singleton
 export const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 
-// Initialize Cloud Firestore instance
-export const db = getFirestore(app);
+// Initialize Cloud Firestore instance with auto-detect long polling for cross-device & mobile compatibility
+export const db = initializeFirestore(app, {
+  experimentalAutoDetectLongPolling: true,
+});
+

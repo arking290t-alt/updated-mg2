@@ -43,6 +43,7 @@ import {
   updateInventoryItemInFirestore,
   markAttachedStockUsedForJob,
   reconcileCompletedJobsInventory,
+  syncLocalJobsAndInventoryToFirestore,
 } from '../firebase/db';
 
 interface FactoryFloorDashboardProps {
@@ -123,6 +124,9 @@ export const FactoryFloorDashboard: React.FC<FactoryFloorDashboardProps> = ({ on
 
     // Automatically reconcile any stock attached to completed jobs
     reconcileCompletedJobsInventory();
+
+    // Ensure any offline local data is pushed to Firestore so all devices have it
+    syncLocalJobsAndInventoryToFirestore();
 
     return () => {
       unsubJobs();

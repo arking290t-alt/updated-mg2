@@ -276,25 +276,18 @@ export function subscribeToJobs(
   onUpdate: (jobs: CorrugationJob[]) => void,
   onError?: (err: Error) => void
 ): () => void {
-  // 1. Immediately provide persisted jobs from local storage
+  // 1. Immediately provide persisted jobs from local storage for instant offline render
   const initialJobs = getPersistedJobs();
   onUpdate(initialJobs);
 
   const jobsRef = collection(db, JOBS_COLLECTION);
-  const q = query(jobsRef, orderBy('createdAt', 'desc'));
 
   const unsubscribe = onSnapshot(
-    q,
+    jobsRef,
     (snapshot) => {
-      const deletedIds = getDeletedJobIds();
       const firestoreItems: CorrugationJob[] = [];
 
       snapshot.forEach((docSnap) => {
-        // Enforce deletion tombstones: NEVER resurrect a deleted job
-        if (deletedIds.has(docSnap.id)) {
-          return;
-        }
-
         const data = docSnap.data();
         firestoreItems.push({
           id: docSnap.id,
@@ -329,36 +322,28 @@ export function subscribeToJobs(
         });
       });
 
-      // Merge with locally persisted items that might not have reached Firestore yet
-      const currentPersisted = getPersistedJobs();
-      const mergedMap = new Map<string, CorrugationJob>();
-
-      // First add persisted local items
-      currentPersisted.forEach((job) => {
-        if (!deletedIds.has(job.id)) {
-          mergedMap.set(job.id, job);
+      // If firestore has items, update local storage & callback
+      if (firestoreItems.length > 0) {
+        const finalJobs = firestoreItems.sort((a, b) => 
+          (b.createdAt || '').localeCompare(a.createdAt || '')
+        );
+        savePersistedJobs(finalJobs);
+        onUpdate(finalJobs);
+      } else {
+        // If firestore has 0 jobs currently, check if this device has local jobs to sync
+        const localJobs = getPersistedJobs();
+        if (localJobs.length > 0) {
+          onUpdate(localJobs);
+          localJobs.forEach((job) => {
+            setDoc(doc(db, JOBS_COLLECTION, job.id), cleanFirestoreData(job), { merge: true }).catch((e) => {
+              console.warn('Auto-sync job failed:', job.id, e);
+            });
+          });
+        } else {
+          savePersistedJobs([]);
+          onUpdate([]);
         }
-      });
-
-      // Then overwrite or add items from Firestore
-      firestoreItems.forEach((job) => {
-        if (!deletedIds.has(job.id)) {
-          const local = mergedMap.get(job.id);
-          // If local has processes but Firestore hasn't caught up, preserve them
-          if (local && (!job.processes || job.processes.length === 0) && local.processes && local.processes.length > 0) {
-            mergedMap.set(job.id, { ...job, processes: local.processes });
-          } else {
-            mergedMap.set(job.id, job);
-          }
-        }
-      });
-
-      const finalJobs = Array.from(mergedMap.values()).sort((a, b) => 
-        (b.createdAt || '').localeCompare(a.createdAt || '')
-      );
-
-      savePersistedJobs(finalJobs);
-      onUpdate(finalJobs);
+      }
     },
     (err) => {
       const wrappedError = handleFirestoreError(err, OperationType.LIST, JOBS_COLLECTION);
@@ -730,25 +715,18 @@ export function subscribeToInventory(
   onUpdate: (inventory: InventoryItem[]) => void,
   onError?: (err: Error) => void
 ): () => void {
-  // 1. Immediately provide persisted inventory from local storage
+  // 1. Immediately provide persisted inventory from local storage for instant offline render
   const initialInv = getPersistedInventory();
   onUpdate(initialInv);
 
   const invRef = collection(db, INVENTORY_COLLECTION);
-  const q = query(invRef, orderBy('orderedAt', 'desc'));
 
   const unsubscribe = onSnapshot(
-    q,
+    invRef,
     (snapshot) => {
-      const deletedIds = getDeletedInventoryIds();
       const firestoreItems: InventoryItem[] = [];
 
       snapshot.forEach((docSnap) => {
-        // Enforce tombstone: NEVER resurrect deleted inventory items
-        if (deletedIds.has(docSnap.id)) {
-          return;
-        }
-
         const data = docSnap.data();
         firestoreItems.push({
           id: docSnap.id,
@@ -781,58 +759,27 @@ export function subscribeToInventory(
         });
       });
 
-      // Merge with locally persisted items
-      const currentPersisted = getPersistedInventory();
-      const mergedMap = new Map<string, InventoryItem>();
-
-      currentPersisted.forEach((inv) => {
-        if (!deletedIds.has(inv.id)) {
-          mergedMap.set(inv.id, inv);
+      if (firestoreItems.length > 0) {
+        const finalInv = firestoreItems.sort((a, b) =>
+          (b.orderedAt || '').localeCompare(a.orderedAt || '')
+        );
+        savePersistedInventory(finalInv);
+        onUpdate(finalInv);
+      } else {
+        // If firestore has 0 inventory items currently, check if this device has local items to sync
+        const localInv = getPersistedInventory();
+        if (localInv.length > 0) {
+          onUpdate(localInv);
+          localInv.forEach((it) => {
+            setDoc(doc(db, INVENTORY_COLLECTION, it.id), cleanFirestoreData(it), { merge: true }).catch((e) => {
+              console.warn('Auto-sync inventory item failed:', it.id, e);
+            });
+          });
+        } else {
+          savePersistedInventory([]);
+          onUpdate([]);
         }
-      });
-
-      firestoreItems.forEach((inv) => {
-        if (!deletedIds.has(inv.id)) {
-          mergedMap.set(inv.id, inv);
-        }
-      });
-
-      const finalInv = Array.from(mergedMap.values()).sort((a, b) =>
-        (b.orderedAt || '').localeCompare(a.orderedAt || '')
-      );
-
-      // Auto-reconcile with completed jobs: If any stock is attached to a completed job, mark it as used
-      const currentJobs = getPersistedJobs();
-      const completedJobMap = new Map<string, CorrugationJob>();
-      currentJobs.filter((j) => j.status === 'Completed').forEach((j) => {
-        completedJobMap.set(j.id, j);
-        if (j.jobName) {
-          completedJobMap.set(j.jobName.trim().toLowerCase(), j);
-        }
-      });
-
-      const reconciledInv = finalInv.map((inv) => {
-        if (!inv.isUsed) {
-          const matchedJob =
-            (inv.jobId && completedJobMap.get(inv.jobId)) ||
-            (inv.jobName && completedJobMap.get(inv.jobName.trim().toLowerCase()));
-          if (matchedJob) {
-            return {
-              ...inv,
-              isUsed: true,
-              status: 'Used' as const,
-              usedAt: matchedJob.completedAt || inv.usedAt || formatReceivedTimestamp(),
-              usedJobId: matchedJob.id,
-              usedJobName: matchedJob.jobName,
-              usedJobDescription: matchedJob.notes || matchedJob.jobType || 'Completed with Job',
-            };
-          }
-        }
-        return inv;
-      });
-
-      savePersistedInventory(reconciledInv);
-      onUpdate(reconciledInv);
+      }
     },
     (err) => {
       const wrappedError = handleFirestoreError(err, OperationType.LIST, INVENTORY_COLLECTION);
@@ -849,16 +796,7 @@ export async function addInventoryItemsToFirestore(
   items: InventoryItem[],
   jobId?: string
 ): Promise<void> {
-  // 1. Remove IDs from deleted tombstones
-  const deletedIds = getDeletedInventoryIds();
-  items.forEach((it) => {
-    if (deletedIds.has(it.id)) {
-      deletedIds.delete(it.id);
-    }
-  });
-  localStorage.setItem(MG_DELETED_INVENTORY_KEY, JSON.stringify(Array.from(deletedIds)));
-
-  // 2. Check if any added stock is ordered for an already-completed job: if so, mark it as used
+  // 1. Check if any added stock is ordered for an already-completed job: if so, mark it as used
   const currentJobs = getPersistedJobs();
   const completedJobsMap = new Map<string, CorrugationJob>();
   currentJobs.filter((j) => j.status === 'Completed').forEach((j) => {
@@ -888,7 +826,7 @@ export async function addInventoryItemsToFirestore(
     return it;
   });
 
-  // 3. Immediately save inventory to local persistent storage
+  // 2. Immediately save inventory to local persistent storage
   const currentInv = getPersistedInventory();
   const updatedInv = [...processedItems, ...currentInv.filter((i) => !processedItems.some((n) => n.id === i.id))];
   savePersistedInventory(updatedInv);
@@ -903,25 +841,33 @@ export async function addInventoryItemsToFirestore(
     savePersistedJobs(updatedJobs);
   }
 
-  // 4. Sync to Firestore
+  // 3. Sync to Firestore with cleanFirestoreData to prevent undefined property errors
   try {
     const batch = writeBatch(db);
     processedItems.forEach((item) => {
       const docRef = doc(db, INVENTORY_COLLECTION, item.id);
-      batch.set(docRef, item);
+      batch.set(docRef, cleanFirestoreData(item), { merge: true });
     });
 
     if (jobId) {
       const jobRef = doc(db, JOBS_COLLECTION, jobId);
-      batch.update(jobRef, {
+      batch.set(jobRef, {
         hasInventory: true,
         updatedAt: new Date().toISOString(),
-      });
+      }, { merge: true });
     }
 
     await batch.commit();
   } catch (err) {
-    console.warn(`Firestore batch commit for inventory failed, but items are saved locally:`, err);
+    console.warn(`Firestore batch commit for inventory failed, retrying with individual setDoc:`, err);
+    // Fallback: Individual setDoc
+    for (const item of processedItems) {
+      try {
+        await setDoc(doc(db, INVENTORY_COLLECTION, item.id), cleanFirestoreData(item), { merge: true });
+      } catch (e) {
+        console.warn(`Individual setDoc failed for ${item.id}:`, e);
+      }
+    }
   }
 }
 
@@ -1126,9 +1072,150 @@ export async function deleteCustomOptionFromFirestore(
 }
 
 // ----------------------------------------------------
-// 4. SEED INITIAL DATA (DISABLED TO PREVENT OVERWRITES & RESURRECTIONS)
+// 4. DAYBOOK PURPOSES (MULTI-DEVICE FIRESTORE SYNC & PERSISTENCE)
+// ----------------------------------------------------
+export const DEFAULT_DAYBOOK_PURPOSES = [
+  'Office Tea & Snacks',
+  'Factory Cleaning & Maintenance',
+  'Electricity & Utility Bill',
+  'Office Stationery & Printing',
+  'Staff Advance & Salary',
+  'Transport & Freight Charges',
+  'Machine Repair & Spares',
+  'Client Refreshments',
+  'Fuel & Generator Diesel',
+  'Packaging Tape & Strapping',
+  'Bank Charges & Processing Fee',
+  'Miscellaneous Plant Expense',
+  'Customer Payment Receipt',
+  'Sales Invoice Collection',
+];
+
+const DAYBOOK_PURPOSES_DOC = 'daybook_purposes';
+const MG_DAYBOOK_PURPOSES_KEY = 'mg_daybook_saved_purposes';
+
+export function getPersistedDaybookPurposes(): string[] {
+  if (typeof window === 'undefined') return DEFAULT_DAYBOOK_PURPOSES;
+  try {
+    const raw = localStorage.getItem(MG_DAYBOOK_PURPOSES_KEY);
+    if (!raw) return DEFAULT_DAYBOOK_PURPOSES;
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) && parsed.length > 0 ? parsed : DEFAULT_DAYBOOK_PURPOSES;
+  } catch {
+    return DEFAULT_DAYBOOK_PURPOSES;
+  }
+}
+
+export function savePersistedDaybookPurposes(purposes: string[]): void {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(MG_DAYBOOK_PURPOSES_KEY, JSON.stringify(purposes));
+  } catch (e) {
+    console.warn('Error saving persisted daybook purposes:', e);
+  }
+}
+
+export function subscribeToDaybookPurposes(
+  onUpdate: (purposes: string[]) => void
+): () => void {
+  const initial = getPersistedDaybookPurposes();
+  onUpdate(initial);
+
+  const docRef = doc(db, SETTINGS_COLLECTION, DAYBOOK_PURPOSES_DOC);
+  const unsubscribe = onSnapshot(
+    docRef,
+    (snapshot) => {
+      if (snapshot.exists()) {
+        const data = snapshot.data();
+        if (Array.isArray(data.purposes) && data.purposes.length > 0) {
+          savePersistedDaybookPurposes(data.purposes);
+          onUpdate(data.purposes);
+          return;
+        }
+      }
+      const current = getPersistedDaybookPurposes();
+      onUpdate(current);
+      setDoc(docRef, { purposes: current, updatedAt: new Date().toISOString() }, { merge: true }).catch(() => {});
+    },
+    (err) => {
+      console.warn('Daybook purposes listener warning:', err);
+      onUpdate(getPersistedDaybookPurposes());
+    }
+  );
+
+  return unsubscribe;
+}
+
+export async function addDaybookPurposeToFirestore(newPurpose: string): Promise<void> {
+  const trimmed = newPurpose.trim();
+  if (!trimmed) return;
+  const current = getPersistedDaybookPurposes();
+  if (current.some((p) => p.toLowerCase() === trimmed.toLowerCase())) return;
+
+  const updated = [...current, trimmed];
+  savePersistedDaybookPurposes(updated);
+
+  const docRef = doc(db, SETTINGS_COLLECTION, DAYBOOK_PURPOSES_DOC);
+  try {
+    await setDoc(docRef, { purposes: updated, updatedAt: new Date().toISOString() }, { merge: true });
+  } catch (err) {
+    console.warn('Failed to save daybook purpose to Firestore:', err);
+  }
+}
+
+export async function deleteDaybookPurposeFromFirestore(purposeToDelete: string): Promise<void> {
+  const current = getPersistedDaybookPurposes();
+  const updated = current.filter((p) => p !== purposeToDelete);
+  savePersistedDaybookPurposes(updated);
+
+  const docRef = doc(db, SETTINGS_COLLECTION, DAYBOOK_PURPOSES_DOC);
+  try {
+    await setDoc(docRef, { purposes: updated, updatedAt: new Date().toISOString() }, { merge: true });
+  } catch (err) {
+    console.warn('Failed to delete daybook purpose from Firestore:', err);
+  }
+}
+
+export async function syncLocalJobsAndInventoryToFirestore(): Promise<void> {
+  try {
+    const localJobs = getPersistedJobs();
+    if (localJobs.length > 0) {
+      for (const job of localJobs) {
+        try {
+          const docRef = doc(db, JOBS_COLLECTION, job.id);
+          const snap = await getDoc(docRef);
+          if (!snap.exists()) {
+            await setDoc(docRef, cleanFirestoreData(job), { merge: true });
+          }
+        } catch (e) {
+          console.warn('Sync job to firestore failed:', job.id, e);
+        }
+      }
+    }
+
+    const localInv = getPersistedInventory();
+    if (localInv.length > 0) {
+      for (const item of localInv) {
+        try {
+          const docRef = doc(db, INVENTORY_COLLECTION, item.id);
+          const snap = await getDoc(docRef);
+          if (!snap.exists()) {
+            await setDoc(docRef, cleanFirestoreData(item), { merge: true });
+          }
+        } catch (e) {
+          console.warn('Sync inventory to firestore failed:', item.id, e);
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('syncLocalJobsAndInventoryToFirestore error:', err);
+  }
+}
+
+// ----------------------------------------------------
+// 5. SEED INITIAL DATA (DISABLED TO PREVENT OVERWRITES & RESURRECTIONS)
 // ----------------------------------------------------
 export async function seedInitialDataIfEmpty(): Promise<void> {
-  // Intentionally empty. No mock/default records are re-inserted.
-  // This ensures deletions remain permanently deleted and the database never resets on refresh.
+  // Intentionally empty.
 }
+
