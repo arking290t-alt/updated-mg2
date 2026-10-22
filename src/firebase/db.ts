@@ -24,6 +24,7 @@ import {
   INITIAL_PUNCH_TYPES,
   formatReceivedTimestamp
 } from '../types/job';
+import { Quotation } from '../types/quotation';
 
 export enum OperationType {
   CREATE = 'create',
@@ -1343,9 +1344,103 @@ export async function syncLocalJobsAndInventoryToFirestore(): Promise<void> {
 }
 
 // ----------------------------------------------------
-// 5. SEED INITIAL DATA (DISABLED TO PREVENT OVERWRITES & RESURRECTIONS)
+// 6. QUOTATIONS (MULTI-DEVICE FIRESTORE SYNC & PERSISTENCE)
 // ----------------------------------------------------
-export async function seedInitialDataIfEmpty(): Promise<void> {
-  // Intentionally empty.
+export const QUOTATIONS_COLLECTION = 'quotations';
+const MG_QUOTATIONS_STORAGE_KEY = 'mg_quotations_cache';
+
+export function getPersistedQuotations(): Quotation[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(MG_QUOTATIONS_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (e) {
+    console.warn('Error reading persisted quotations:', e);
+    return [];
+  }
 }
+
+export function savePersistedQuotations(quotations: Quotation[]): void {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(MG_QUOTATIONS_STORAGE_KEY, JSON.stringify(quotations));
+  } catch (e) {
+    console.warn('Error saving persisted quotations:', e);
+  }
+}
+
+export function subscribeToQuotations(
+  onUpdate: (quotations: Quotation[]) => void,
+  onError?: (err: any) => void
+): () => void {
+  // Immediately serve cached
+  const initial = getPersistedQuotations();
+  onUpdate(initial);
+
+  const colRef = collection(db, QUOTATIONS_COLLECTION);
+  const q = query(colRef, orderBy('createdAt', 'desc'));
+
+  const unsubscribe = onSnapshot(
+    q,
+    (snapshot) => {
+      const list: Quotation[] = [];
+      snapshot.forEach((docSnap) => {
+        const data = docSnap.data();
+        list.push({
+          id: docSnap.id,
+          refNo: data.refNo || '',
+          date: data.date || '',
+          customerName: data.customerName || '',
+          cityState: data.cityState || '',
+          items: Array.isArray(data.items) ? data.items : [],
+          notes: Array.isArray(data.notes) ? data.notes : [],
+          createdAt: data.createdAt || new Date().toISOString(),
+          updatedAt: data.updatedAt || undefined,
+        });
+      });
+      savePersistedQuotations(list);
+      onUpdate(list);
+    },
+    (err) => {
+      console.warn('Quotations listener warning:', err);
+      if (onError) onError(err);
+      onUpdate(getPersistedQuotations());
+    }
+  );
+
+  return unsubscribe;
+}
+
+export async function addQuotationToFirestore(quotation: Quotation): Promise<void> {
+  const current = getPersistedQuotations();
+  const updated = [quotation, ...current.filter((q) => q.id !== quotation.id)];
+  savePersistedQuotations(updated);
+
+  const docRef = doc(db, QUOTATIONS_COLLECTION, quotation.id);
+  await setDoc(docRef, cleanFirestoreData(quotation), { merge: true });
+}
+
+export async function updateQuotationInFirestore(
+  id: string,
+  updates: Partial<Quotation>
+): Promise<void> {
+  const current = getPersistedQuotations();
+  const updated = current.map((q) => (q.id === id ? { ...q, ...updates, updatedAt: new Date().toISOString() } : q));
+  savePersistedQuotations(updated);
+
+  const docRef = doc(db, QUOTATIONS_COLLECTION, id);
+  await updateDoc(docRef, cleanFirestoreData({ ...updates, updatedAt: new Date().toISOString() }));
+}
+
+export async function deleteQuotationFromFirestore(id: string): Promise<void> {
+  const current = getPersistedQuotations();
+  const updated = current.filter((q) => q.id !== id);
+  savePersistedQuotations(updated);
+
+  const docRef = doc(db, QUOTATIONS_COLLECTION, id);
+  await deleteDoc(docRef);
+}
+
 

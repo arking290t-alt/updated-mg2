@@ -22,7 +22,8 @@ import {
   Scissors,
   Printer,
   Workflow,
-  BookOpen
+  BookOpen,
+  FileSpreadsheet
 } from 'lucide-react';
 import { GeminiChatBot } from './GeminiChatBot';
 import { NewJobModal } from './NewJobModal';
@@ -32,6 +33,7 @@ import { OrderInventoryView } from './OrderInventoryView';
 import { ExistingInventoryView } from './ExistingInventoryView';
 import { PlantDataView } from './PlantDataView';
 import { DaybookView } from './DaybookView';
+import { QuotationView } from './QuotationView';
 import { 
   CorrugationJob, 
   InventoryItem, 
@@ -77,9 +79,9 @@ export const EmptyDashboard: React.FC<EmptyDashboardProps> = ({ onLogout }) => {
   const [isDataMenuExpanded, setIsDataMenuExpanded] = useState(true);
   const [dataTab, setDataTab] = useState<'stock' | 'die' | 'press' | 'process'>('stock');
   
-  // Views: dashboard | pending_jobs | order_inventory | existing_inventory | data | daybook
+  // Views: dashboard | pending_jobs | order_inventory | existing_inventory | data | daybook | quotation
   const [currentView, setCurrentView] = useState<
-    'dashboard' | 'pending_jobs' | 'order_inventory' | 'existing_inventory' | 'data' | 'daybook'
+    'dashboard' | 'pending_jobs' | 'order_inventory' | 'existing_inventory' | 'data' | 'daybook' | 'quotation'
   >('dashboard');
 
   // Modals State
@@ -773,6 +775,19 @@ export const EmptyDashboard: React.FC<EmptyDashboardProps> = ({ onLogout }) => {
               <BookOpen className="w-3.5 h-3.5" />
               <span>Daybook</span>
             </button>
+
+            {/* Quotation Navigation Tab */}
+            <button
+              onClick={() => setCurrentView('quotation')}
+              className={`px-3 py-1.5 text-xs font-semibold rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap ${
+                currentView === 'quotation'
+                  ? 'bg-rose-600 text-white font-bold shadow-xs'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5" />
+              <span>Quotation</span>
+            </button>
           </div>
 
           {/* Top Right: Firebase Status, User & Logout */}
@@ -1141,6 +1156,31 @@ export const EmptyDashboard: React.FC<EmptyDashboardProps> = ({ onLogout }) => {
                 </button>
               </div>
 
+              {/* Quotation Option in Drawer */}
+              <div>
+                <button
+                  onClick={() => {
+                    setCurrentView('quotation');
+                    setIsDrawerOpen(false);
+                  }}
+                  className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                    currentView === 'quotation'
+                      ? 'bg-rose-500/10 text-rose-400 border border-rose-500/30 shadow-xs'
+                      : 'bg-slate-950/60 border border-slate-800/80 text-white hover:border-slate-700'
+                  }`}
+                >
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-6 h-6 rounded-md bg-rose-500/20 text-rose-400 flex items-center justify-center">
+                      <FileSpreadsheet className="w-3.5 h-3.5" />
+                    </div>
+                    <span>Quotation</span>
+                  </div>
+                  <span className="text-[10px] font-mono text-rose-400 bg-rose-950/60 px-2 py-0.5 rounded border border-rose-800/40 font-semibold">
+                    Billing
+                  </span>
+                </button>
+              </div>
+
               {/* Firebase Database Status Box */}
               <div className="p-3 rounded-xl bg-slate-950 border border-slate-800/80 text-xs space-y-1.5">
                 <div className="flex items-center justify-between text-slate-300 font-medium">
@@ -1363,6 +1403,11 @@ export const EmptyDashboard: React.FC<EmptyDashboardProps> = ({ onLogout }) => {
         {/* VIEW 6: Office Daybook */}
         {currentView === 'daybook' && (
           <DaybookView />
+        )}
+
+        {/* VIEW 7: Quotation Maker & Archive */}
+        {currentView === 'quotation' && (
+          <QuotationView />
         )}
 
       </main>

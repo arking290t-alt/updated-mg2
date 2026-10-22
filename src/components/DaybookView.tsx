@@ -15,7 +15,7 @@ import {
   addDaybookPurposeToFirestore,
   deleteDaybookPurposeFromFirestore,
 } from '../firebase/db';
-import html2canvas from 'html2canvas';
+import html2canvas from 'html2canvas-pro';
 import {
   BookOpen,
   Wallet,
