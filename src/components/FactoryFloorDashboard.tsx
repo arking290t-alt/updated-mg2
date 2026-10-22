@@ -50,20 +50,9 @@ interface FactoryFloorDashboardProps {
   onLogout: () => void;
 }
 
-const DEFAULT_CORRUGATION_PROCESSES = [
-  'Paper Reel Splicing & Loading',
-  'Corrugation / Fluting (Single / Double Wall)',
-  'Sheet Slitting & Scoring',
-  'Flexo Printing & Inking',
-  'Die Cutting & Creasing',
-  'Rotary Slotting & Punching',
-  'Folder Gluer / Side Pasting',
-  'Wire Stitching & Binding',
-  'Quality Inspection & Burst Testing',
-  'Bundling & Strapping',
-  'Palletization & Shrink Wrapping',
-  'Dispatch & Logistics',
-];
+import { getPersistedJobProcesses, addJobProcessToFirestore } from '../firebase/db';
+
+const DEFAULT_CORRUGATION_PROCESSES: string[] = [];
 
 function parseJobDateToTimestamp(dateStr?: string): number {
   if (!dateStr) return 0;
@@ -388,11 +377,16 @@ export const FactoryFloorDashboard: React.FC<FactoryFloorDashboardProps> = ({ on
     }
   };
 
-  // 5. Initialize standard process pipeline for a job
+  // 5. Initialize saved process pipeline for a job
   const handleAssignStandardProcesses = async (job: CorrugationJob) => {
     setIsUpdating(true);
     try {
-      const newSteps: JobProcessStep[] = DEFAULT_CORRUGATION_PROCESSES.map((name, idx) => ({
+      const saved = getPersistedJobProcesses();
+      if (saved.length === 0) {
+        showNotification('No saved processes found. Please type & add custom processes first.', 'info');
+        return;
+      }
+      const newSteps: JobProcessStep[] = saved.map((name, idx) => ({
         id: `proc-${Date.now()}-${idx}`,
         name,
         completed: false,
@@ -402,9 +396,9 @@ export const FactoryFloorDashboard: React.FC<FactoryFloorDashboardProps> = ({ on
       await updateJobDetailsInFirestore(job.id, {
         processes: newSteps,
       });
-      showNotification(`Standard manufacturing pipeline (12 steps) assigned to "${job.jobName}".`);
+      showNotification(`Saved processes (${saved.length} steps) assigned to "${job.jobName}".`);
     } catch (err: any) {
-      alert(`Error assigning pipeline: ${err.message}`);
+      showNotification(`Error assigning pipeline: ${err.message}`, 'info');
     } finally {
       setIsUpdating(false);
     }
@@ -412,22 +406,24 @@ export const FactoryFloorDashboard: React.FC<FactoryFloorDashboardProps> = ({ on
 
   // Add custom process directly on factory floor
   const handleAddCustomProcess = async (job: CorrugationJob, processName: string) => {
-    if (!processName.trim()) return;
+    const trimmed = processName.trim();
+    if (!trimmed) return;
     setIsUpdating(true);
     try {
+      await addJobProcessToFirestore(trimmed);
       const currentSteps = job.processes || [];
       const newStep: JobProcessStep = {
         id: `proc-${Date.now()}-${currentSteps.length + 1}`,
-        name: processName.trim(),
+        name: trimmed,
         completed: false,
         sequence: currentSteps.length + 1,
       };
       await updateJobDetailsInFirestore(job.id, {
         processes: [...currentSteps, newStep],
       });
-      showNotification(`Process "${processName.trim()}" added to "${job.jobName}".`);
+      showNotification(`Process "${trimmed}" saved and added to "${job.jobName}".`);
     } catch (err: any) {
-      alert(`Error adding process: ${err.message}`);
+      showNotification(`Error adding process: ${err.message}`, 'info');
     } finally {
       setIsUpdating(false);
     }

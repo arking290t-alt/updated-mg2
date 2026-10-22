@@ -46,6 +46,12 @@ import {
   formatReceivedTimestamp
 } from '../types/job';
 import { PhotoDropzone } from './PhotoDropzone';
+import {
+  subscribeToJobProcesses,
+  addJobProcessToFirestore,
+  deleteJobProcessFromFirestore,
+  getPersistedJobProcesses,
+} from '../firebase/db';
 
 interface PlantDataViewProps {
   jobs: CorrugationJob[];
@@ -62,22 +68,9 @@ interface PlantDataViewProps {
   onAddInventoryItem?: (newItem: Omit<InventoryItem, 'id' | 'orderedAt'>) => Promise<void>;
 }
 
-const DEFAULT_CORRUGATION_PROCESSES = [
-  'Paper Reel Splicing & Loading',
-  'Corrugation / Fluting (Single / Double Wall)',
-  'Sheet Slitting & Scoring',
-  'Flexo Printing & Inking',
-  'Die Cutting & Creasing',
-  'Rotary Slotting & Punching',
-  'Folder Gluer / Side Pasting',
-  'Wire Stitching & Binding',
-  'Quality Inspection & Burst Testing',
-  'Bundling & Strapping',
-  'Palletization & Shrink Wrapping',
-  'Dispatch & Logistics'
-];
+const DEFAULT_CORRUGATION_PROCESSES: string[] = [];
 
-const MG_SAVED_PROCESSES_KEY = 'mg_saved_process_names';
+const MG_SAVED_PROCESSES_KEY = 'mg_saved_job_processes';
 
 const compressImageFile = (file: File): Promise<string> => {
   return new Promise((resolve) => {
@@ -191,20 +184,19 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
 
   // Process Tracking States
   const [selectedProcessJobId, setSelectedProcessJobId] = useState<string>('');
-  const [savedProcesses, setSavedProcesses] = useState<string[]>(() => {
-    try {
-      const stored = localStorage.getItem(MG_SAVED_PROCESSES_KEY);
-      if (stored) return JSON.parse(stored);
-    } catch (e) {
-      // ignore
-    }
-    return DEFAULT_CORRUGATION_PROCESSES;
-  });
+  const [savedProcesses, setSavedProcesses] = useState<string[]>(() => getPersistedJobProcesses());
   const [customProcessInput, setCustomProcessInput] = useState<string>('');
   const [processSearch, setProcessSearch] = useState<string>('');
   const [processStatusFilter, setProcessStatusFilter] = useState<'all' | 'pending' | 'completed'>('all');
   const [processNotification, setProcessNotification] = useState<{ type: 'success' | 'info'; message: string } | null>(null);
   const [inlineDateInputs, setInlineDateInputs] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    const unsub = subscribeToJobProcesses((list) => {
+      setSavedProcesses(list);
+    });
+    return () => unsub();
+  }, []);
 
   useEffect(() => {
     if (!selectedProcessJobId && jobs.length > 0) {
@@ -756,16 +748,8 @@ export const PlantDataView: React.FC<PlantDataViewProps> = ({
     const targetJob = jobs.find((j) => j.id === jobId);
     if (!targetJob) return;
 
-    // 1. Save to reusable process list
-    if (!savedProcesses.includes(trimmed)) {
-      const updatedSaved = [...savedProcesses, trimmed];
-      setSavedProcesses(updatedSaved);
-      try {
-        localStorage.setItem(MG_SAVED_PROCESSES_KEY, JSON.stringify(updatedSaved));
-      } catch (e) {
-        // ignore
-      }
-    }
+    // 1. Save to reusable process list in Firestore
+    await addJobProcessToFirestore(trimmed);
 
     // 2. Add process step to target job
     const currentSteps = targetJob.processes || [];

@@ -45,6 +45,9 @@ import {
   Download,
   Search,
   Bookmark,
+  Copy,
+  ChevronDown,
+  CheckCircle2,
 } from 'lucide-react';
 
 export interface DaybookAccount {
@@ -156,6 +159,38 @@ export const DaybookView: React.FC = () => {
   });
   const [promptInputValue, setPromptInputValue] = useState('');
   const [promptError, setPromptError] = useState('');
+
+  // Searchable Purpose State
+  const [isPurposeDropdownOpen, setIsPurposeDropdownOpen] = useState(false);
+  const purposeDropdownRef = useRef<HTMLDivElement>(null);
+
+  // Filter saved purposes based on typed purpose input
+  const filteredPurposes = useMemo(() => {
+    if (!purpose.trim()) return savedPurposes;
+    return savedPurposes.filter((p) =>
+      p.toLowerCase().includes(purpose.trim().toLowerCase())
+    );
+  }, [savedPurposes, purpose]);
+
+  // Click outside listener for purpose dropdown
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (purposeDropdownRef.current && !purposeDropdownRef.current.contains(e.target as Node)) {
+        setIsPurposeDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  // Screenshot Preview Modal State
+  const [screenshotPreview, setScreenshotPreview] = useState<{
+    url: string;
+    blob: Blob | null;
+    date: string;
+  } | null>(null);
+  const [isCopiedToClipboard, setIsCopiedToClipboard] = useState(false);
+  const [ssErrorMessage, setSsErrorMessage] = useState<string | null>(null);
 
   // Offscreen container ref for html2canvas
   const screenshotContainerRef = useRef<HTMLDivElement>(null);
@@ -618,18 +653,17 @@ export const DaybookView: React.FC = () => {
   const handleSaveCurrentPurpose = async () => {
     const trimmed = purpose.trim();
     if (!trimmed) {
-      alert('Please type a purpose name first.');
+      setFormError('Please type a purpose name first.');
       return;
     }
     await addDaybookPurposeToFirestore(trimmed);
+    setFormError('');
   };
 
   const handleDeleteSavedPurpose = async (pToDelete: string) => {
-    if (confirm(`Remove "${pToDelete}" from saved purposes?`)) {
-      await deleteDaybookPurposeFromFirestore(pToDelete);
-      if (purpose === pToDelete) {
-        setPurpose('');
-      }
+    await deleteDaybookPurposeFromFirestore(pToDelete);
+    if (purpose.toLowerCase() === pToDelete.toLowerCase()) {
+      setPurpose('');
     }
   };
 
@@ -742,22 +776,26 @@ export const DaybookView: React.FC = () => {
     });
   };
 
-  // Screenshot Capture using html2canvas
+  // Screenshot Capture using html2canvas with robust inline rendering & fallback preview
   const handleCaptureSS = async () => {
     setIsCapturingSS(true);
+    setSsErrorMessage(null);
     try {
       const hide = !balancesVisible;
 
-      // Construct clean offscreen print container
+      // Construct clean print container attached in active layout flow
       const ssDiv = document.createElement('div');
       ssDiv.style.cssText = `
         position: fixed;
-        top: -9999px;
-        left: -9999px;
+        left: 0;
+        top: 0;
         width: 850px;
+        z-index: -9999;
+        opacity: 0.01;
+        pointer-events: none;
         background: #090d16;
         color: #f1f5f9;
-        font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
         padding: 32px;
         box-sizing: border-box;
         border: 1px solid #1e293b;
@@ -767,7 +805,7 @@ export const DaybookView: React.FC = () => {
       ssDiv.innerHTML = `
         <div style="text-align: center; margin-bottom: 24px; border-bottom: 2px solid #334155; padding-bottom: 16px;">
           <div style="font-size: 24px; font-weight: 800; letter-spacing: 1.5px; color: #f59e0b;">OFFICE DAYBOOK</div>
-          <div style="font-size: 13px; color: #94a3b8; margin-top: 4px;">Corrugation Plant Financial Record · Date: <strong style="color: #fff;">${filterDate}</strong></div>
+          <div style="font-size: 13px; color: #94a3b8; margin-top: 4px;">Corrugation Plant Financial Record · Date: <strong style="color: #ffffff;">${filterDate}</strong></div>
         </div>
 
         <div style="background: #0f172a; border: 1px solid #1e293b; border-radius: 10px; padding: 14px 20px; margin-bottom: 20px; display: flex; justify-content: space-between; font-size: 14px; font-weight: 600;">
@@ -847,17 +885,59 @@ export const DaybookView: React.FC = () => {
       const canvas = await html2canvas(ssDiv, {
         scale: 2,
         backgroundColor: '#090d16',
+        logging: false,
+        useCORS: true,
+        allowTaint: true,
+        windowWidth: 1024,
+        scrollX: 0,
+        scrollY: 0,
       });
       document.body.removeChild(ssDiv);
 
-      const link = document.createElement('a');
-      link.download = `daybook-${filterDate}.png`;
-      link.href = canvas.toDataURL('image/png');
-      link.click();
+      const dataUrl = canvas.toDataURL('image/png');
+      let blob: Blob | null = null;
+      try {
+        blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
+      } catch (be) {
+        console.warn('Blob generation error:', be);
+      }
+
+      // Try automatic download
+      try {
+        const link = document.createElement('a');
+        link.download = `daybook-${filterDate}.png`;
+        link.href = dataUrl;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      } catch (dlErr) {
+        console.warn('Auto download blocked:', dlErr);
+      }
+
+      // Always show preview modal with copy and direct download options
+      setScreenshotPreview({
+        url: dataUrl,
+        blob,
+        date: filterDate,
+      });
     } catch (err: any) {
-      alert(`Screenshot generation failed: ${err.message}`);
+      console.error('Screenshot error:', err);
+      setSsErrorMessage(`Screenshot capture failed: ${err.message || 'Unknown error'}`);
     } finally {
       setIsCapturingSS(false);
+    }
+  };
+
+  const handleCopyScreenshot = async () => {
+    if (!screenshotPreview?.blob) return;
+    try {
+      await navigator.clipboard.write([
+        new ClipboardItem({ 'image/png': screenshotPreview.blob }),
+      ]);
+      setIsCopiedToClipboard(true);
+      setTimeout(() => setIsCopiedToClipboard(false), 2500);
+    } catch (e) {
+      console.warn('Clipboard write failed:', e);
     }
   };
 
@@ -999,6 +1079,23 @@ export const DaybookView: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {/* Screenshot Error Notice (if any) */}
+      {ssErrorMessage && (
+        <div className="p-3 bg-rose-500/10 border border-rose-500/30 rounded-xl text-xs text-rose-300 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+            <span>{ssErrorMessage}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setSsErrorMessage(null)}
+            className="text-slate-400 hover:text-white cursor-pointer"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
 
       {/* BALANCE KPI ROW */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -1243,8 +1340,8 @@ export const DaybookView: React.FC = () => {
                   />
                 </div>
 
-                {/* Purpose: Save & Select */}
-                <div>
+                {/* Purpose: Searchable Combobox with Type & Save */}
+                <div className="relative" ref={purposeDropdownRef}>
                   <div className="flex items-center justify-between mb-1">
                     <label className="block text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
                       Purpose
@@ -1253,40 +1350,136 @@ export const DaybookView: React.FC = () => {
                       <button
                         type="button"
                         onClick={handleSaveCurrentPurpose}
-                        className="text-[10px] text-amber-400 hover:text-amber-300 font-bold cursor-pointer flex items-center gap-0.5 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/30"
-                        title="Save this purpose to your list"
+                        className="text-[10px] text-amber-400 hover:text-amber-300 font-bold cursor-pointer flex items-center gap-0.5 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/30 transition-colors"
+                        title="Save typed purpose to your reusable list"
                       >
                         <Plus className="w-2.5 h-2.5" />
-                        <span>Save</span>
+                        <span>Save Purpose</span>
                       </button>
                     )}
                   </div>
-                  <div className="flex items-center gap-1.5">
-                    <select
-                      value={savedPurposes.includes(purpose) ? purpose : ''}
-                      onChange={(e) => {
-                        if (e.target.value) {
-                          setPurpose(e.target.value);
-                        }
-                      }}
-                      className="w-1/2 px-2 py-2 bg-slate-900 border border-slate-800 rounded-xl text-[11px] text-slate-300 focus:outline-none focus:border-amber-500 cursor-pointer"
-                      title="Select saved purpose"
-                    >
-                      <option value="">Select...</option>
-                      {savedPurposes.map((p) => (
-                        <option key={p} value={p}>
-                          {p}
-                        </option>
-                      ))}
-                    </select>
+
+                  <div className="relative">
+                    <div className="absolute inset-y-0 left-0 pl-2.5 flex items-center pointer-events-none text-slate-500">
+                      <Search className="w-3.5 h-3.5" />
+                    </div>
                     <input
                       type="text"
-                      placeholder="Or custom..."
+                      placeholder="Search or type purpose..."
                       value={purpose}
-                      onChange={(e) => setPurpose(e.target.value)}
-                      className="w-1/2 px-2.5 py-2 bg-slate-950 border border-slate-800 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500"
+                      onFocus={() => setIsPurposeDropdownOpen(true)}
+                      onChange={(e) => {
+                        setPurpose(e.target.value);
+                        setIsPurposeDropdownOpen(true);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && purpose.trim()) {
+                          if (!savedPurposes.some((p) => p.toLowerCase() === purpose.trim().toLowerCase())) {
+                            e.preventDefault();
+                            handleSaveCurrentPurpose();
+                            setIsPurposeDropdownOpen(false);
+                          }
+                        }
+                      }}
+                      className="w-full pl-8 pr-14 py-2 bg-slate-950 border border-slate-800 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500 transition-colors"
                     />
+                    <div className="absolute inset-y-0 right-0 pr-1.5 flex items-center gap-1">
+                      {purpose && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setPurpose('');
+                            setIsPurposeDropdownOpen(true);
+                          }}
+                          className="p-1 text-slate-500 hover:text-white transition-colors cursor-pointer"
+                          title="Clear purpose"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => setIsPurposeDropdownOpen(!isPurposeDropdownOpen)}
+                        className="p-1 text-slate-400 hover:text-white transition-colors cursor-pointer"
+                        title="Toggle saved purposes list"
+                      >
+                        <ChevronDown className={`w-3.5 h-3.5 transition-transform ${isPurposeDropdownOpen ? 'rotate-180' : ''}`} />
+                      </button>
+                    </div>
                   </div>
+
+                  {/* Dropdown Menu for Purpose Search & Selection */}
+                  {isPurposeDropdownOpen && (
+                    <div className="absolute left-0 right-0 top-full mt-1.5 z-40 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl overflow-hidden p-2">
+                      <div className="px-2 py-1 text-[10px] font-mono text-slate-400 uppercase tracking-wider flex items-center justify-between border-b border-slate-800 mb-1">
+                        <span>Saved Purposes ({savedPurposes.length})</span>
+                        {purpose.trim() && <span>Filter: "{purpose.trim()}"</span>}
+                      </div>
+
+                      {/* Quick Save Option when typing something new */}
+                      {purpose.trim() && !savedPurposes.some((p) => p.toLowerCase() === purpose.trim().toLowerCase()) && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            handleSaveCurrentPurpose();
+                            setIsPurposeDropdownOpen(false);
+                          }}
+                          className="w-full text-left px-2.5 py-1.5 mb-1 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 rounded-lg text-xs font-semibold border border-amber-500/30 flex items-center gap-1.5 transition-colors cursor-pointer"
+                        >
+                          <Plus className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                          <span className="truncate">Save "+ {purpose.trim()}" to purposes</span>
+                        </button>
+                      )}
+
+                      <div className="max-h-44 overflow-y-auto space-y-0.5">
+                        {filteredPurposes.length > 0 ? (
+                          filteredPurposes.map((p) => {
+                            const isSelected = purpose.toLowerCase() === p.toLowerCase();
+                            return (
+                              <div
+                                key={p}
+                                className={`px-2.5 py-1.5 text-xs rounded-lg flex items-center justify-between cursor-pointer transition-colors group ${
+                                  isSelected
+                                    ? 'bg-amber-500/15 text-amber-300 font-semibold border border-amber-500/30'
+                                    : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+                                }`}
+                              >
+                                <div
+                                  onClick={() => {
+                                    setPurpose(p);
+                                    setIsPurposeDropdownOpen(false);
+                                  }}
+                                  className="flex-1 flex items-center gap-2 truncate"
+                                >
+                                  <span className="truncate">{p}</span>
+                                  {isSelected && <Check className="w-3 h-3 text-amber-400 shrink-0" />}
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleDeleteSavedPurpose(p);
+                                  }}
+                                  className="p-1 text-slate-500 hover:text-rose-400 hover:bg-slate-700/60 rounded transition-colors opacity-70 group-hover:opacity-100 cursor-pointer ml-1"
+                                  title={`Delete "${p}" from saved purposes`}
+                                >
+                                  <Trash2 className="w-3 h-3" />
+                                </button>
+                              </div>
+                            );
+                          })
+                        ) : (
+                          <div className="p-3 text-center text-xs text-slate-400">
+                            {savedPurposes.length === 0 ? (
+                              <span>No purposes saved yet. Type above to add your first purpose.</span>
+                            ) : (
+                              <span>No saved purposes match "{purpose}".</span>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 <div>
@@ -1951,6 +2144,81 @@ export const DaybookView: React.FC = () => {
               >
                 Close
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* SCREENSHOT PREVIEW MODAL */}
+      {screenshotPreview && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-150">
+          <div className="bg-slate-900 border border-slate-700 w-full max-w-4xl max-h-[90vh] rounded-2xl shadow-2xl flex flex-col overflow-hidden">
+            {/* Header */}
+            <div className="px-5 py-3.5 border-b border-slate-800 flex items-center justify-between bg-slate-950/80 shrink-0">
+              <div className="flex items-center gap-2">
+                <Camera className="w-4 h-4 text-amber-400" />
+                <h3 className="text-sm font-bold text-white">
+                  Daybook Screenshot Preview
+                </h3>
+                <span className="text-xs font-mono text-amber-400 bg-amber-950/60 border border-amber-800/50 px-2 py-0.5 rounded">
+                  {screenshotPreview.date}
+                </span>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleCopyScreenshot}
+                  className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 flex items-center gap-1.5 transition-colors cursor-pointer"
+                  title="Copy screenshot to clipboard"
+                >
+                  {isCopiedToClipboard ? (
+                    <>
+                      <Check className="w-3.5 h-3.5 text-emerald-400" />
+                      <span className="text-emerald-400 font-bold">Copied!</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="w-3.5 h-3.5 text-slate-300" />
+                      <span>Copy Image</span>
+                    </>
+                  )}
+                </button>
+
+                <a
+                  href={screenshotPreview.url}
+                  download={`daybook-${screenshotPreview.date}.png`}
+                  className="px-3.5 py-1.5 rounded-xl text-xs font-bold bg-amber-500 hover:bg-amber-400 text-slate-950 flex items-center gap-1.5 transition-colors cursor-pointer shadow-sm"
+                  title="Download image file"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Download PNG</span>
+                </a>
+
+                <button
+                  type="button"
+                  onClick={() => setScreenshotPreview(null)}
+                  className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition-colors cursor-pointer ml-1"
+                  title="Close screenshot preview"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+
+            {/* Image Preview Body */}
+            <div className="flex-1 overflow-y-auto p-4 bg-slate-950/90 text-center">
+              <img
+                src={screenshotPreview.url}
+                alt={`Daybook screenshot for ${screenshotPreview.date}`}
+                className="max-w-full h-auto mx-auto rounded-xl border border-slate-800 shadow-xl"
+              />
+            </div>
+
+            {/* Footer */}
+            <div className="px-5 py-2.5 border-t border-slate-800 bg-slate-950/80 flex flex-col sm:flex-row items-center justify-between gap-1 text-[11px] text-slate-500 shrink-0">
+              <span className="text-emerald-400 font-medium">✓ Screenshot ready with accounts and day's transactions.</span>
+              <span>Tip: If your browser blocks automatic downloads, use "Copy Image" or right-click to save.</span>
             </div>
           </div>
         </div>

@@ -1074,7 +1074,10 @@ export async function deleteCustomOptionFromFirestore(
 // ----------------------------------------------------
 // 4. DAYBOOK PURPOSES (MULTI-DEVICE FIRESTORE SYNC & PERSISTENCE)
 // ----------------------------------------------------
-export const DEFAULT_DAYBOOK_PURPOSES = [
+// User requested: Start fresh with NO existing/hardcoded options. Users type & save their own purposes.
+export const DEFAULT_DAYBOOK_PURPOSES: string[] = [];
+
+export const LEGACY_DEFAULT_DAYBOOK_PURPOSES: string[] = [
   'Office Tea & Snacks',
   'Factory Cleaning & Maintenance',
   'Electricity & Utility Bill',
@@ -1095,21 +1098,28 @@ const DAYBOOK_PURPOSES_DOC = 'daybook_purposes';
 const MG_DAYBOOK_PURPOSES_KEY = 'mg_daybook_saved_purposes';
 
 export function getPersistedDaybookPurposes(): string[] {
-  if (typeof window === 'undefined') return DEFAULT_DAYBOOK_PURPOSES;
+  if (typeof window === 'undefined') return [];
   try {
     const raw = localStorage.getItem(MG_DAYBOOK_PURPOSES_KEY);
-    if (!raw) return DEFAULT_DAYBOOK_PURPOSES;
+    if (!raw) return [];
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) && parsed.length > 0 ? parsed : DEFAULT_DAYBOOK_PURPOSES;
+    if (!Array.isArray(parsed)) return [];
+    // Filter out legacy hardcoded defaults
+    return parsed.filter(
+      (p: string) => typeof p === 'string' && p.trim() && !LEGACY_DEFAULT_DAYBOOK_PURPOSES.includes(p.trim())
+    );
   } catch {
-    return DEFAULT_DAYBOOK_PURPOSES;
+    return [];
   }
 }
 
 export function savePersistedDaybookPurposes(purposes: string[]): void {
   if (typeof window === 'undefined') return;
   try {
-    localStorage.setItem(MG_DAYBOOK_PURPOSES_KEY, JSON.stringify(purposes));
+    const clean = purposes.filter(
+      (p) => typeof p === 'string' && p.trim() && !LEGACY_DEFAULT_DAYBOOK_PURPOSES.includes(p.trim())
+    );
+    localStorage.setItem(MG_DAYBOOK_PURPOSES_KEY, JSON.stringify(clean));
   } catch (e) {
     console.warn('Error saving persisted daybook purposes:', e);
   }
@@ -1127,9 +1137,12 @@ export function subscribeToDaybookPurposes(
     (snapshot) => {
       if (snapshot.exists()) {
         const data = snapshot.data();
-        if (Array.isArray(data.purposes) && data.purposes.length > 0) {
-          savePersistedDaybookPurposes(data.purposes);
-          onUpdate(data.purposes);
+        if (Array.isArray(data.purposes)) {
+          const clean = data.purposes.filter(
+            (p: string) => typeof p === 'string' && p.trim() && !LEGACY_DEFAULT_DAYBOOK_PURPOSES.includes(p.trim())
+          );
+          savePersistedDaybookPurposes(clean);
+          onUpdate(clean);
           return;
         }
       }
@@ -1165,7 +1178,7 @@ export async function addDaybookPurposeToFirestore(newPurpose: string): Promise<
 
 export async function deleteDaybookPurposeFromFirestore(purposeToDelete: string): Promise<void> {
   const current = getPersistedDaybookPurposes();
-  const updated = current.filter((p) => p !== purposeToDelete);
+  const updated = current.filter((p) => p.toLowerCase() !== purposeToDelete.toLowerCase());
   savePersistedDaybookPurposes(updated);
 
   const docRef = doc(db, SETTINGS_COLLECTION, DAYBOOK_PURPOSES_DOC);
@@ -1173,6 +1186,123 @@ export async function deleteDaybookPurposeFromFirestore(purposeToDelete: string)
     await setDoc(docRef, { purposes: updated, updatedAt: new Date().toISOString() }, { merge: true });
   } catch (err) {
     console.warn('Failed to delete daybook purpose from Firestore:', err);
+  }
+}
+
+// ----------------------------------------------------
+// 5. JOB PROCESS PRESETS (MULTI-DEVICE FIRESTORE SYNC & PERSISTENCE)
+// ----------------------------------------------------
+// User requested: Start fresh with NO existing process suggestions. Users type & save first, then select.
+export const DEFAULT_JOB_PROCESSES: string[] = [];
+
+export const LEGACY_DEFAULT_JOB_PROCESSES: string[] = [
+  'Paper Reel Splicing & Loading',
+  'Corrugation / Fluting (Single / Double Wall)',
+  'Corrugation / Fluting',
+  'Sheet Slitting & Scoring',
+  'Flexo Printing & Inking',
+  'Die Cutting & Creasing',
+  'Rotary Slotting & Punching',
+  'Folder Gluer / Side Pasting',
+  'Wire Stitching & Binding',
+  'Quality Inspection & Burst Testing',
+  'Bundling & Strapping',
+  'Bundling & Dispatch',
+  'Palletization & Shrink Wrapping',
+  'Dispatch & Logistics',
+];
+
+const JOB_PROCESSES_DOC = 'job_processes';
+const MG_JOB_PROCESSES_KEY = 'mg_saved_job_processes';
+
+export function getPersistedJobProcesses(): string[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(MG_JOB_PROCESSES_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (p: string) => typeof p === 'string' && p.trim() && !LEGACY_DEFAULT_JOB_PROCESSES.includes(p.trim())
+    );
+  } catch {
+    return [];
+  }
+}
+
+export function savePersistedJobProcesses(processes: string[]): void {
+  if (typeof window === 'undefined') return;
+  try {
+    const clean = processes.filter(
+      (p) => typeof p === 'string' && p.trim() && !LEGACY_DEFAULT_JOB_PROCESSES.includes(p.trim())
+    );
+    localStorage.setItem(MG_JOB_PROCESSES_KEY, JSON.stringify(clean));
+  } catch (e) {
+    console.warn('Error saving persisted job processes:', e);
+  }
+}
+
+export function subscribeToJobProcesses(
+  onUpdate: (processes: string[]) => void
+): () => void {
+  const initial = getPersistedJobProcesses();
+  onUpdate(initial);
+
+  const docRef = doc(db, SETTINGS_COLLECTION, JOB_PROCESSES_DOC);
+  const unsubscribe = onSnapshot(
+    docRef,
+    (snapshot) => {
+      if (snapshot.exists()) {
+        const data = snapshot.data();
+        if (Array.isArray(data.processes)) {
+          const clean = data.processes.filter(
+            (p: string) => typeof p === 'string' && p.trim() && !LEGACY_DEFAULT_JOB_PROCESSES.includes(p.trim())
+          );
+          savePersistedJobProcesses(clean);
+          onUpdate(clean);
+          return;
+        }
+      }
+      const current = getPersistedJobProcesses();
+      onUpdate(current);
+      setDoc(docRef, { processes: current, updatedAt: new Date().toISOString() }, { merge: true }).catch(() => {});
+    },
+    (err) => {
+      console.warn('Job processes listener warning:', err);
+      onUpdate(getPersistedJobProcesses());
+    }
+  );
+
+  return unsubscribe;
+}
+
+export async function addJobProcessToFirestore(newProcess: string): Promise<void> {
+  const trimmed = newProcess.trim();
+  if (!trimmed) return;
+  const current = getPersistedJobProcesses();
+  if (current.some((p) => p.toLowerCase() === trimmed.toLowerCase())) return;
+
+  const updated = [...current, trimmed];
+  savePersistedJobProcesses(updated);
+
+  const docRef = doc(db, SETTINGS_COLLECTION, JOB_PROCESSES_DOC);
+  try {
+    await setDoc(docRef, { processes: updated, updatedAt: new Date().toISOString() }, { merge: true });
+  } catch (err) {
+    console.warn('Failed to save job process to Firestore:', err);
+  }
+}
+
+export async function deleteJobProcessFromFirestore(processToDelete: string): Promise<void> {
+  const current = getPersistedJobProcesses();
+  const updated = current.filter((p) => p.toLowerCase() !== processToDelete.toLowerCase());
+  savePersistedJobProcesses(updated);
+
+  const docRef = doc(db, SETTINGS_COLLECTION, JOB_PROCESSES_DOC);
+  try {
+    await setDoc(docRef, { processes: updated, updatedAt: new Date().toISOString() }, { merge: true });
+  } catch (err) {
+    console.warn('Failed to delete job process from Firestore:', err);
   }
 }
 

@@ -1,6 +1,11 @@
-import React, { useState, useMemo } from 'react';
-import { X, Plus, Search, Factory, Building2, Check, ChevronDown, Tag, Trash2, Workflow, Sparkles } from 'lucide-react';
+import React, { useState, useMemo, useEffect } from 'react';
+import { X, Plus, Search, Factory, Building2, Check, ChevronDown, Tag, Trash2, Workflow, Sparkles, CheckCircle2 } from 'lucide-react';
 import { CorrugationJob, JobPlacement, JobProcessStep } from '../types/job';
+import {
+  subscribeToJobProcesses,
+  addJobProcessToFirestore,
+  deleteJobProcessFromFirestore,
+} from '../firebase/db';
 
 interface NewJobModalProps {
   isOpen: boolean;
@@ -10,19 +15,6 @@ interface NewJobModalProps {
   onAddNewType: (newType: string) => void;
   onDeleteType?: (type: string) => void;
 }
-
-const DEFAULT_PROCESS_PRESETS = [
-  'Paper Reel Splicing & Loading',
-  'Corrugation / Fluting',
-  'Sheet Slitting & Scoring',
-  'Flexo Printing & Inking',
-  'Die Cutting & Creasing',
-  'Rotary Slotting & Punching',
-  'Folder Gluer / Side Pasting',
-  'Wire Stitching & Binding',
-  'Quality Inspection & Burst Testing',
-  'Bundling & Dispatch',
-];
 
 export const NewJobModal: React.FC<NewJobModalProps> = ({
   isOpen,
@@ -39,6 +31,16 @@ export const NewJobModal: React.FC<NewJobModalProps> = ({
   const [jobDate, setJobDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [selectedProcesses, setSelectedProcesses] = useState<JobProcessStep[]>([]);
   const [customProcessInput, setCustomProcessInput] = useState('');
+  const [savedProcesses, setSavedProcesses] = useState<string[]>([]);
+  const [processSearch, setProcessSearch] = useState('');
+
+  // Subscribe to real-time custom job processes from Firestore
+  useEffect(() => {
+    const unsub = subscribeToJobProcesses((list) => {
+      setSavedProcesses(list);
+    });
+    return () => unsub();
+  }, []);
   
   // Job Type Search & Add state
   const [typeSearch, setTypeSearch] = useState('');
@@ -55,6 +57,14 @@ export const NewJobModal: React.FC<NewJobModalProps> = ({
       t.toLowerCase().includes(typeSearch.trim().toLowerCase())
     );
   }, [availableTypes, typeSearch]);
+
+  // Filter saved processes based on search
+  const filteredSavedProcesses = useMemo(() => {
+    if (!processSearch.trim()) return savedProcesses;
+    return savedProcesses.filter((p) =>
+      p.toLowerCase().includes(processSearch.trim().toLowerCase())
+    );
+  }, [savedProcesses, processSearch]);
 
   if (!isOpen) return null;
 
@@ -101,18 +111,34 @@ export const NewJobModal: React.FC<NewJobModalProps> = ({
     setCustomProcessInput('');
   };
 
+  const handleSaveAndAddProcess = async (name: string) => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    await addJobProcessToFirestore(trimmed);
+    handleAddProcess(trimmed);
+  };
+
+  const handleSaveOnlyProcess = async (name: string) => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    await addJobProcessToFirestore(trimmed);
+    setCustomProcessInput('');
+  };
+
+  const handleDeleteSavedProcess = async (pToDelete: string) => {
+    await deleteJobProcessFromFirestore(pToDelete);
+  };
+
   const handleRemoveProcess = (id: string) => {
     setSelectedProcesses((prev) => prev.filter((p) => p.id !== id));
   };
 
-  const handleAddStandardPipeline = () => {
-    const standard: JobProcessStep[] = DEFAULT_PROCESS_PRESETS.map((name, idx) => ({
-      id: `proc_${Date.now()}_${idx + 1}`,
-      name,
-      completed: false,
-      sequence: idx + 1,
-    }));
-    setSelectedProcesses(standard);
+  const handleAddAllSavedProcesses = () => {
+    savedProcesses.forEach((name) => {
+      if (!selectedProcesses.some((p) => p.name.toLowerCase() === name.toLowerCase())) {
+        handleAddProcess(name);
+      }
+    });
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -400,68 +426,147 @@ export const NewJobModal: React.FC<NewJobModalProps> = ({
             </div>
           </div>
 
-          {/* Manufacturing Processes Pipeline (Optional) */}
+          {/* Manufacturing Processes Pipeline (Custom Type & Save, No Hardcoded Suggestions) */}
           <div className="p-3.5 bg-slate-950 border border-slate-800 rounded-xl space-y-3">
             <div className="flex items-center justify-between">
               <label className="text-xs font-bold text-teal-400 uppercase tracking-wide flex items-center gap-1.5">
                 <Workflow className="w-3.5 h-3.5" />
                 <span>Manufacturing Processes Pipeline ({selectedProcesses.length})</span>
               </label>
-              <button
-                type="button"
-                onClick={handleAddStandardPipeline}
-                className="text-[11px] font-semibold text-amber-400 hover:text-amber-300 flex items-center gap-1 cursor-pointer"
-              >
-                <Sparkles className="w-3 h-3" />
-                <span>Add Standard Pipeline</span>
-              </button>
+              {savedProcesses.length > 0 && (
+                <button
+                  type="button"
+                  onClick={handleAddAllSavedProcesses}
+                  className="text-[11px] font-semibold text-amber-400 hover:text-amber-300 flex items-center gap-1 cursor-pointer"
+                  title="Add all your saved processes to this job"
+                >
+                  <Sparkles className="w-3 h-3" />
+                  <span>Add All Saved ({savedProcesses.length})</span>
+                </button>
+              )}
             </div>
 
-            {/* Input to type custom process */}
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={customProcessInput}
-                onChange={(e) => setCustomProcessInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault();
-                    handleAddProcess(customProcessInput);
-                  }
-                }}
-                placeholder="Type process name (e.g. UV Coating, Box Pasting)..."
-                className="flex-1 px-3 py-1.5 bg-slate-900 border border-slate-800 rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:border-teal-400"
-              />
-              <button
-                type="button"
-                onClick={() => handleAddProcess(customProcessInput)}
-                className="px-3 py-1.5 bg-teal-600 hover:bg-teal-500 text-white rounded-lg text-xs font-bold transition-colors cursor-pointer flex items-center gap-1 shrink-0"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                <span>Add Step</span>
-              </button>
-            </div>
-
-            {/* Quick Presets */}
-            <div className="flex flex-wrap gap-1.5">
-              {DEFAULT_PROCESS_PRESETS.slice(0, 6).map((preset) => {
-                const isSelected = selectedProcesses.some((p) => p.name.toLowerCase() === preset.toLowerCase());
-                return (
+            {/* Input to type custom process with Save and Add actions */}
+            <div className="space-y-2">
+              <div className="flex flex-col sm:flex-row gap-2">
+                <input
+                  type="text"
+                  value={customProcessInput}
+                  onChange={(e) => setCustomProcessInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      if (customProcessInput.trim()) {
+                        handleSaveAndAddProcess(customProcessInput);
+                      }
+                    }
+                  }}
+                  placeholder="Type new process (e.g. UV Coating, Pasting, Stitching)..."
+                  className="flex-1 px-3 py-2 bg-slate-900 border border-slate-800 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-teal-400"
+                />
+                <div className="flex items-center gap-1.5">
                   <button
-                    key={preset}
                     type="button"
-                    onClick={() => handleAddProcess(preset)}
-                    className={`px-2 py-0.5 rounded text-[11px] font-medium transition-colors cursor-pointer flex items-center gap-1 border ${
-                      isSelected
-                        ? 'bg-teal-950/60 text-teal-300 border-teal-700/80 opacity-60 cursor-default'
-                        : 'bg-slate-900 text-slate-300 border-slate-800 hover:border-teal-500/60 hover:text-white'
-                    }`}
+                    disabled={!customProcessInput.trim()}
+                    onClick={() => handleSaveOnlyProcess(customProcessInput)}
+                    className="px-3 py-2 bg-slate-900 hover:bg-slate-800 text-teal-300 border border-teal-500/30 rounded-xl text-xs font-semibold transition-colors cursor-pointer disabled:opacity-40 flex items-center gap-1 shrink-0"
+                    title="Save process permanently to your list without adding to job right now"
                   >
-                    <Plus className="w-2.5 h-2.5 text-teal-400" />
-                    <span>{preset}</span>
+                    <Plus className="w-3 h-3" />
+                    <span>Save Process</span>
                   </button>
-                );
-              })}
+                  <button
+                    type="button"
+                    disabled={!customProcessInput.trim()}
+                    onClick={() => handleSaveAndAddProcess(customProcessInput)}
+                    className="px-3 py-2 bg-teal-600 hover:bg-teal-500 text-white rounded-xl text-xs font-bold transition-colors cursor-pointer disabled:opacity-40 flex items-center gap-1 shrink-0 shadow-sm"
+                    title="Save process to your list and add as step to this job"
+                  >
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    <span>Save & Add Step</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Saved Processes Section (Type & Save first, then select) */}
+            <div className="space-y-2 pt-1">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-mono uppercase tracking-wider text-slate-400">
+                  Your Saved Processes ({savedProcesses.length})
+                </span>
+                {savedProcesses.length > 3 && (
+                  <div className="relative w-44">
+                    <Search className="w-3 h-3 text-slate-500 absolute left-2 top-1.5" />
+                    <input
+                      type="text"
+                      value={processSearch}
+                      onChange={(e) => setProcessSearch(e.target.value)}
+                      placeholder="Search saved..."
+                      className="w-full pl-6 pr-2 py-0.5 bg-slate-900 border border-slate-800 rounded-md text-[10px] text-white placeholder-slate-500 focus:outline-none focus:border-teal-400"
+                    />
+                  </div>
+                )}
+              </div>
+
+              {savedProcesses.length > 0 ? (
+                <div className="flex flex-wrap gap-1.5 max-h-36 overflow-y-auto p-1 bg-slate-900/60 rounded-xl border border-slate-800/60">
+                  {filteredSavedProcesses.map((processName) => {
+                    const isSelected = selectedProcesses.some(
+                      (p) => p.name.toLowerCase() === processName.toLowerCase()
+                    );
+                    return (
+                      <div
+                        key={processName}
+                        className={`group inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium border transition-colors ${
+                          isSelected
+                            ? 'bg-teal-950/70 text-teal-300 border-teal-700/80 shadow-xs'
+                            : 'bg-slate-950 text-slate-300 border-slate-800 hover:border-teal-500/60 hover:text-white'
+                        }`}
+                      >
+                        <button
+                          type="button"
+                          onClick={() => handleAddProcess(processName)}
+                          className="cursor-pointer flex items-center gap-1"
+                          title={isSelected ? 'Already added to job' : `Add "${processName}" to job`}
+                        >
+                          {isSelected ? (
+                            <Check className="w-3 h-3 text-teal-400" />
+                          ) : (
+                            <Plus className="w-3 h-3 text-teal-400" />
+                          )}
+                          <span>{processName}</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDeleteSavedProcess(processName);
+                          }}
+                          className="text-slate-500 hover:text-rose-400 p-0.5 rounded transition-colors opacity-70 group-hover:opacity-100 cursor-pointer ml-1"
+                          title={`Delete "${processName}" from saved processes`}
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      </div>
+                    );
+                  })}
+                  {filteredSavedProcesses.length === 0 && processSearch && (
+                    <div className="p-2 text-[11px] text-slate-400">
+                      No saved processes match "{processSearch}".
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="p-3 text-center bg-slate-900/40 border border-dashed border-slate-800 rounded-xl">
+                  <p className="text-xs text-slate-400">
+                    No processes saved yet.
+                  </p>
+                  <p className="text-[11px] text-slate-500 mt-0.5">
+                    Type your process above and click <strong className="text-teal-400">Save Process</strong> or <strong className="text-teal-400">Save & Add Step</strong> to build your factory's custom process list.
+                  </p>
+                </div>
+              )}
             </div>
 
             {/* Selected Processes Pills */}
