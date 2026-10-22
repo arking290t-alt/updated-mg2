@@ -25,6 +25,10 @@ import {
 import html2canvas from 'html2canvas';
 import { Quotation, QuotationItem, DEFAULT_QUOTATION_NOTES } from '../types/quotation';
 import {
+  LETTERHEAD_HEADER_DATA_URL,
+  LETTERHEAD_FOOTER_DATA_URL,
+} from '../assets/letterheadAssets';
+import {
   subscribeToQuotations,
   addQuotationToFirestore,
   updateQuotationInFirestore,
@@ -95,6 +99,7 @@ export const QuotationView: React.FC = () => {
   const [previewQuotation, setPreviewQuotation] = useState<Quotation | null>(null);
   const [isCapturing, setIsCapturing] = useState(false);
   const [isCopied, setIsCopied] = useState(false);
+  const [downloadSuccessMessage, setDownloadSuccessMessage] = useState<string | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [formError, setFormError] = useState('');
 
@@ -325,52 +330,97 @@ export const QuotationView: React.FC = () => {
     }
   };
 
-  // Download high-resolution PNG using html2canvas
+  // Download high-resolution A4 PNG using html2canvas
   const handleDownloadQuotationPng = async (quotation: Quotation, pageIdx = 0) => {
-    const el = document.getElementById(`letterhead-page-${quotation.id}-${pageIdx}`);
-    if (!el) return;
+    let el = document.getElementById(`letterhead-page-${quotation.id}-${pageIdx}`);
+    
+    // If not currently in DOM (e.g. clicked directly from cards list), open preview first then capture
+    if (!el) {
+      setPreviewQuotation(quotation);
+      setIsCapturing(true);
+      setTimeout(() => {
+        handleDownloadQuotationPng(quotation, pageIdx);
+      }, 350);
+      return;
+    }
 
     setIsCapturing(true);
     try {
+      // Small pause to ensure all base64 images and layouts are fully painted
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
       const canvas = await html2canvas(el, {
-        scale: 2,
+        scale: 2, // 794 x 2 = 1588px, 1123 x 2 = 2246px (High-res A4 standard)
+        width: 794,
+        height: 1123,
         backgroundColor: '#ffffff',
         logging: false,
-        useCORS: true,
-        allowTaint: true,
+        useCORS: false, // Not needed for embedded base64 data URLs
+        allowTaint: false, // Prevents security errors on canvas.toBlob / toDataURL
       });
 
-      const dataUrl = canvas.toDataURL('image/png');
       const totalPages = Math.ceil((quotation.items?.length || 1) / itemsPerPage);
       const pageSuffix = totalPages > 1 ? `-Page${pageIdx + 1}` : '';
-      const filename = `Quotation-${quotation.customerName.replace(/[^a-zA-Z0-9]/g, '_')}-${formatDisplayDate(quotation.date)}${pageSuffix}.png`;
+      const cleanCustomer = quotation.customerName.replace(/[^a-zA-Z0-9]/g, '_') || 'Quote';
+      const filename = `Quotation-A4-${cleanCustomer}-${formatDisplayDate(quotation.date)}${pageSuffix}.png`;
 
-      const link = document.createElement('a');
-      link.download = filename;
-      link.href = dataUrl;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
+      // Preferred Blob download with fallback
+      canvas.toBlob((blob) => {
+        if (!blob) {
+          const dataUrl = canvas.toDataURL('image/png');
+          const link = document.createElement('a');
+          link.download = filename;
+          link.href = dataUrl;
+          document.body.appendChild(link);
+          link.click();
+          setTimeout(() => document.body.removeChild(link), 100);
+          setDownloadSuccessMessage(`Downloaded A4: ${filename}`);
+          setTimeout(() => setDownloadSuccessMessage(null), 3500);
+          return;
+        }
+
+        const blobUrl = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.download = filename;
+        link.href = blobUrl;
+        document.body.appendChild(link);
+        link.click();
+        setTimeout(() => {
+          document.body.removeChild(link);
+          URL.revokeObjectURL(blobUrl);
+        }, 1500);
+
+        setDownloadSuccessMessage(`Downloaded A4: ${filename}`);
+        setTimeout(() => setDownloadSuccessMessage(null), 3500);
+      }, 'image/png');
     } catch (e: any) {
-      console.warn('Screenshot capture warning:', e);
+      console.error('Screenshot capture error:', e);
+      alert(`Download failed: ${e?.message || 'Please use Print / PDF option to save as A4.'}`);
     } finally {
       setIsCapturing(false);
     }
   };
 
-  // Copy to clipboard
+  // Copy A4 screenshot to clipboard
   const handleCopyQuotationPng = async (quotation: Quotation, pageIdx = 0) => {
-    const el = document.getElementById(`letterhead-page-${quotation.id}-${pageIdx}`);
-    if (!el) return;
+    let el = document.getElementById(`letterhead-page-${quotation.id}-${pageIdx}`);
+    if (!el) {
+      setPreviewQuotation(quotation);
+      return;
+    }
 
     setIsCapturing(true);
     try {
+      await new Promise((resolve) => setTimeout(resolve, 80));
+
       const canvas = await html2canvas(el, {
         scale: 2,
+        width: 794,
+        height: 1123,
         backgroundColor: '#ffffff',
         logging: false,
-        useCORS: true,
-        allowTaint: true,
+        useCORS: false,
+        allowTaint: false,
       });
 
       canvas.toBlob(async (blob) => {
@@ -625,9 +675,10 @@ export const QuotationView: React.FC = () => {
 
                   <button
                     type="button"
-                    onClick={() => setPreviewQuotation(quote)}
-                    className="p-1.5 text-slate-400 hover:text-amber-400 rounded-lg hover:bg-slate-800 transition-colors cursor-pointer"
-                    title="Download / Print"
+                    onClick={() => handleDownloadQuotationPng(quote, 0)}
+                    disabled={isCapturing}
+                    className="p-1.5 text-slate-400 hover:text-amber-400 rounded-lg hover:bg-slate-800 transition-colors cursor-pointer disabled:opacity-50"
+                    title="Download A4 Quotation PNG"
                   >
                     <Download className="w-3.5 h-3.5" />
                   </button>
@@ -1007,22 +1058,22 @@ export const QuotationView: React.FC = () => {
                 <button
                   type="button"
                   onClick={handlePrint}
-                  className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 flex items-center gap-1.5 transition-colors cursor-pointer"
-                  title="Print or Save as PDF"
+                  className="px-3.5 py-1.5 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 flex items-center gap-1.5 transition-colors cursor-pointer"
+                  title="Print or Save as A4 PDF document"
                 >
-                  <Printer className="w-3.5 h-3.5 text-slate-300" />
-                  <span>Print / PDF</span>
+                  <Printer className="w-3.5 h-3.5 text-amber-400" />
+                  <span>Print / Save PDF (A4)</span>
                 </button>
 
                 <button
                   type="button"
-                  onClick={() => handleDownloadQuotationPng(previewQuotation)}
+                  onClick={() => handleDownloadQuotationPng(previewQuotation, 0)}
                   disabled={isCapturing}
-                  className="px-4 py-1.5 rounded-xl text-xs font-bold bg-amber-500 hover:bg-amber-400 text-slate-950 flex items-center gap-1.5 transition-colors cursor-pointer shadow-sm disabled:opacity-50"
-                  title="Download Quotation Image PNG"
+                  className="px-4 py-1.5 rounded-xl text-xs font-bold bg-amber-500 hover:bg-amber-400 text-slate-950 flex items-center gap-1.5 transition-colors cursor-pointer shadow-md disabled:opacity-50"
+                  title="Download Quotation as A4 image (1588x2246 PNG)"
                 >
-                  <Download className="w-3.5 h-3.5" />
-                  <span>{isCapturing ? 'Generating...' : 'Download PNG'}</span>
+                  <Download className="w-3.5 h-3.5 stroke-[2.5]" />
+                  <span>{isCapturing ? 'Generating A4...' : 'Download A4 PNG'}</span>
                 </button>
 
                 <button
@@ -1035,63 +1086,115 @@ export const QuotationView: React.FC = () => {
               </div>
             </div>
 
-            {/* Preview Sheet Viewport (Rendered exact to uploaded picture) */}
-            <div className="flex-1 overflow-y-auto p-4 sm:p-6 bg-slate-950/90 flex flex-col items-center gap-6 quotation-print-area">
+            {/* Success Toast Notification */}
+            {downloadSuccessMessage && (
+              <div className="bg-emerald-950/90 border-b border-emerald-800/80 px-5 py-2 text-xs font-semibold text-emerald-300 flex items-center justify-between animate-in fade-in">
+                <span className="flex items-center gap-1.5">
+                  <Check className="w-4 h-4 text-emerald-400" />
+                  <span>{downloadSuccessMessage}</span>
+                </span>
+                <span className="text-[10px] font-mono text-emerald-400/80">Standard A4 Size (1588 × 2246 px)</span>
+              </div>
+            )}
+
+            {/* Preview Sheet Viewport (Rendered strictly as standard A4: 794px x 1123px) */}
+            <div className="flex-1 overflow-y-auto overflow-x-auto p-4 sm:p-6 bg-slate-950/90 flex flex-col items-center gap-6 quotation-print-area">
               <style>{`
+                @page {
+                  size: A4 portrait;
+                  margin: 0;
+                }
                 @media print {
-                  body {
-                    background: white !important;
-                    color: black !important;
+                  html, body {
+                    width: 210mm !important;
+                    height: 297mm !important;
+                    margin: 0 !important;
+                    padding: 0 !important;
+                    background: #ffffff !important;
+                    color: #000000 !important;
+                    -webkit-print-color-adjust: exact !important;
+                    print-color-adjust: exact !important;
                   }
                   body * {
-                    visibility: hidden;
+                    visibility: hidden !important;
                   }
                   .quotation-print-area, .quotation-print-area * {
-                    visibility: visible;
+                    visibility: visible !important;
                   }
                   .quotation-print-area {
-                    position: absolute;
-                    left: 0;
-                    top: 0;
-                    width: 100% !important;
-                    padding: 0 !important;
+                    position: absolute !important;
+                    left: 0 !important;
+                    top: 0 !important;
+                    width: 210mm !important;
                     margin: 0 !important;
-                    background: white !important;
+                    padding: 0 !important;
+                    background: #ffffff !important;
                   }
                   .letterhead-print-page {
+                    width: 210mm !important;
+                    height: 297mm !important;
+                    min-height: 297mm !important;
+                    max-height: 297mm !important;
                     box-shadow: none !important;
-                    margin: 0 auto !important;
-                    page-break-after: always;
-                    break-after: page;
+                    border: none !important;
+                    margin: 0 !important;
+                    padding: 7mm !important;
+                    page-break-after: always !important;
+                    break-after: page !important;
+                    box-sizing: border-box !important;
                   }
                 }
               `}</style>
               
               {getPagesForQuotation(previewQuotation).map((page, pageIdx) => (
-                <div
-                  key={page.pageNumber}
-                  id={`letterhead-page-${previewQuotation.id}-${pageIdx}`}
-                  className="w-full max-w-[820px] bg-white text-slate-900 shadow-2xl relative p-4 sm:p-6 letterhead-print-page"
-                  style={{
-                    minHeight: '1140px',
-                    boxSizing: 'border-box',
-                    fontFamily: '"Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, Roboto, sans-serif',
-                  }}
-                >
-                  {/* INNER FRAMED BOX: Continuous side lines, top line and bottom line */}
-                  <div
-                    className="w-full h-full border-[1.5px] border-black bg-white flex flex-col justify-between relative"
-                    style={{ minHeight: '1090px' }}
-                  >
-                    {/* TOP HEADER: Manoj Graphics Logo, GST, Office & Factory with paint splatter */}
-                    <div className="w-full border-b-[1.5px] border-black bg-white">
-                      <img
-                        src="/assets/aistudio/letterhead_header_inner.png"
-                        alt="Manoj Graphics Letterhead Banner"
-                        className="w-full block select-none pointer-events-none"
-                        style={{ width: '100%', height: 'auto' }}
-                      />
+                <div key={page.pageNumber} className="flex flex-col items-center gap-2">
+                  {page.totalPages > 1 && (
+                    <div className="flex items-center justify-between w-[794px] px-2 text-xs text-slate-400">
+                      <span className="font-mono">Page {page.pageNumber} of {page.totalPages}</span>
+                      <button
+                        type="button"
+                        onClick={() => handleDownloadQuotationPng(previewQuotation, pageIdx)}
+                        disabled={isCapturing}
+                        className="px-2.5 py-1 text-[11px] font-semibold rounded-lg bg-slate-800 hover:bg-slate-700 text-amber-300 flex items-center gap-1 cursor-pointer transition-colors"
+                      >
+                        <Download className="w-3 h-3" />
+                        <span>Download Page {page.pageNumber} (A4 PNG)</span>
+                      </button>
                     </div>
+                  )}
+
+                  {/* Standard A4 Paper Sheet: 794px width x 1123px height */}
+                  <div
+                    id={`letterhead-page-${previewQuotation.id}-${pageIdx}`}
+                    className="bg-white text-slate-900 shadow-2xl relative p-5 sm:p-6 letterhead-print-page shrink-0"
+                    style={{
+                      width: '794px',
+                      minWidth: '794px',
+                      maxWidth: '794px',
+                      height: '1123px',
+                      minHeight: '1123px',
+                      maxHeight: '1123px',
+                      boxSizing: 'border-box',
+                      fontFamily: '"Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, Roboto, sans-serif',
+                    }}
+                  >
+                    {/* INNER FRAMED BOX: Continuous side lines, top line and bottom line */}
+                    <div
+                      className="w-full h-full border-[1.5px] border-black bg-white flex flex-col justify-between relative overflow-hidden"
+                      style={{
+                        height: '100%',
+                        boxSizing: 'border-box',
+                      }}
+                    >
+                      {/* TOP HEADER: Manoj Graphics Logo, GST, Office & Factory with paint splatter */}
+                      <div className="w-full border-b-[1.5px] border-black bg-white shrink-0">
+                        <img
+                          src={LETTERHEAD_HEADER_DATA_URL}
+                          alt="Manoj Graphics Letterhead Banner"
+                          className="w-full block select-none pointer-events-none"
+                          style={{ width: '100%', height: 'auto' }}
+                        />
+                      </div>
 
                     {/* CONTENT BODY: Ref, To, Customer, City, Date, Particulars Table */}
                     <div className="px-6 sm:px-10 py-5 flex-1 flex flex-col justify-between">
@@ -1183,10 +1286,10 @@ export const QuotationView: React.FC = () => {
                     </div>
 
                     {/* BOTTOM SECTION: Please Note on left, and Uncut Splatter along the bottom */}
-                    <div className="relative w-full mt-auto select-none">
+                    <div className="relative w-full mt-auto select-none shrink-0">
                       {/* Full-width bottom splatter image - UNCUT */}
                       <img
-                        src="/assets/aistudio/letterhead_footer_clean_inner.png"
+                        src={LETTERHEAD_FOOTER_DATA_URL}
                         alt="Manoj Graphics Footer Splatter"
                         className="w-full block pointer-events-none select-none"
                         style={{ width: '100%', height: 'auto' }}
@@ -1220,6 +1323,7 @@ export const QuotationView: React.FC = () => {
 
                   </div>
                 </div>
+              </div>
               ))}
 
             </div>
