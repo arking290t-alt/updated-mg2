@@ -184,10 +184,12 @@ export const DaybookView: React.FC = () => {
   }, []);
 
   // Screenshot Preview Modal State
+  const [ssTheme, setSsTheme] = useState<'light' | 'dark'>('light');
   const [screenshotPreview, setScreenshotPreview] = useState<{
     url: string;
     blob: Blob | null;
     date: string;
+    theme: 'light' | 'dark';
   } | null>(null);
   const [isCopiedToClipboard, setIsCopiedToClipboard] = useState(false);
   const [ssErrorMessage, setSsErrorMessage] = useState<string | null>(null);
@@ -776,135 +778,307 @@ export const DaybookView: React.FC = () => {
     });
   };
 
-  // Screenshot Capture using html2canvas with robust inline rendering & fallback preview
-  const handleCaptureSS = async () => {
+  // Screenshot Capture using html-to-image with robust offscreen wrapper & crisp rendering
+  const handleCaptureSS = async (themeToUse: 'light' | 'dark' = ssTheme) => {
     setIsCapturingSS(true);
     setSsErrorMessage(null);
+    let wrapper: HTMLDivElement | null = null;
     try {
       const hide = !balancesVisible;
+      const isDark = themeToUse === 'dark';
 
-      // Construct clean print container attached in active layout flow
-      const ssDiv = document.createElement('div');
-      ssDiv.style.cssText = `
-        position: fixed;
+      // Construct clean offscreen wrapper attached outside the viewport
+      // The wrapper is placed offscreen at -10000px so user sees NO flicker/glitch.
+      wrapper = document.createElement('div');
+      wrapper.style.cssText = 'position: fixed; left: -10000px; top: 0; width: 920px; z-index: -9999; pointer-events: none; overflow: visible;';
+
+      // Inner report container has position: relative, left: 0, and FULL opacity (opacity: 1)
+      // This is crucial: toPng captures the node with its computed styles.
+      // Setting opacity: 1 ensures zero black/transparent output!
+      const reportDiv = document.createElement('div');
+      reportDiv.id = 'daybook-capture-sheet';
+      reportDiv.style.cssText = `
+        position: relative;
         left: 0;
         top: 0;
-        width: 850px;
-        z-index: -9999;
-        opacity: 0.01;
-        pointer-events: none;
-        background: #090d16;
-        color: #f1f5f9;
+        width: 920px;
+        opacity: 1;
+        background: ${isDark ? '#0f172a' : '#ffffff'};
+        color: ${isDark ? '#f8fafc' : '#0f172a'};
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-        padding: 32px;
+        padding: 36px 40px;
         box-sizing: border-box;
-        border: 1px solid #1e293b;
-        border-radius: 12px;
+        border-radius: 8px;
       `;
 
-      ssDiv.innerHTML = `
-        <div style="text-align: center; margin-bottom: 24px; border-bottom: 2px solid #334155; padding-bottom: 16px;">
-          <div style="font-size: 24px; font-weight: 800; letter-spacing: 1.5px; color: #f59e0b;">OFFICE DAYBOOK</div>
-          <div style="font-size: 13px; color: #94a3b8; margin-top: 4px;">Corrugation Plant Financial Record · Date: <strong style="color: #ffffff;">${filterDate}</strong></div>
+      reportDiv.innerHTML = isDark
+        ? `
+        <!-- DARK THEME REPORT -->
+        <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #334155; padding-bottom: 16px; margin-bottom: 22px;">
+          <div>
+            <div style="font-size: 24px; font-weight: 800; color: #f59e0b; letter-spacing: 0.5px;">OFFICE DAYBOOK</div>
+            <div style="font-size: 13px; color: #94a3b8; margin-top: 3px;">Corrugation Plant Financial Record · Manoj Graphics</div>
+          </div>
+          <div style="text-align: right;">
+            <div style="font-size: 11px; font-weight: 700; color: #94a3b8; text-transform: uppercase;">Statement Date</div>
+            <div style="font-size: 18px; font-weight: 800; font-family: monospace; color: #ffffff;">${filterDate}</div>
+          </div>
         </div>
 
-        <div style="background: #0f172a; border: 1px solid #1e293b; border-radius: 10px; padding: 14px 20px; margin-bottom: 20px; display: flex; justify-content: space-between; font-size: 14px; font-weight: 600;">
-          <div>Opening Balance (Start of Day): <span style="color: #38bdf8; font-family: monospace; font-size: 16px; margin-left: 6px;">${hide ? '********' : openingBalance.toFixed(2)}</span></div>
-          <div>Closing Balance (End of Day): <span style="color: #34d399; font-family: monospace; font-size: 16px; margin-left: 6px;">${hide ? '********' : closingBalance.toFixed(2)}</span></div>
+        <!-- 4 KPI SUMMARY CARDS -->
+        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 12px; margin-bottom: 24px;">
+          <div style="background: #1e293b; border: 1px solid #334155; border-radius: 10px; padding: 12px 14px;">
+            <div style="font-size: 10px; font-weight: 700; color: #94a3b8; text-transform: uppercase;">Opening Balance</div>
+            <div style="font-size: 17px; font-weight: 800; font-family: monospace; color: #38bdf8; margin-top: 4px;">
+              ${hide ? '********' : '₹' + openingBalance.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </div>
+          </div>
+          <div style="background: #450a0a; border: 1px solid #7f1d1d; border-radius: 10px; padding: 12px 14px;">
+            <div style="font-size: 10px; font-weight: 700; color: #fca5a5; text-transform: uppercase;">Total Debit (Dr)</div>
+            <div style="font-size: 17px; font-weight: 800; font-family: monospace; color: #f87171; margin-top: 4px;">
+              ₹${dayTotals.totalDr.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </div>
+          </div>
+          <div style="background: #064e3b; border: 1px solid #065f46; border-radius: 10px; padding: 12px 14px;">
+            <div style="font-size: 10px; font-weight: 700; color: #86efac; text-transform: uppercase;">Total Credit (Cr)</div>
+            <div style="font-size: 17px; font-weight: 800; font-family: monospace; color: #4ade80; margin-top: 4px;">
+              ₹${dayTotals.totalCr.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </div>
+          </div>
+          <div style="background: #1e293b; border: 1px solid #334155; border-radius: 10px; padding: 12px 14px;">
+            <div style="font-size: 10px; font-weight: 700; color: #94a3b8; text-transform: uppercase;">Closing Balance</div>
+            <div style="font-size: 17px; font-weight: 800; font-family: monospace; color: #34d399; margin-top: 4px;">
+              ${hide ? '********' : '₹' + closingBalance.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </div>
+          </div>
         </div>
 
-        <div style="font-size: 14px; font-weight: 700; color: #f59e0b; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px;">Account Balances</div>
+        <!-- ACCOUNT BALANCES -->
+        <div style="font-size: 13px; font-weight: 700; color: #f59e0b; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px;">Account Balances</div>
         <table style="width: 100%; border-collapse: collapse; margin-bottom: 24px; font-size: 12px;">
           <thead>
             <tr style="background: #1e293b; color: #cbd5e1;">
-              <th style="padding: 9px 12px; border: 1px solid #334155; text-align: left;">Account Name</th>
-              <th style="padding: 9px 12px; border: 1px solid #334155; text-align: right;">Historical Balance</th>
+              <th style="padding: 8px 12px; border: 1px solid #334155; text-align: left; font-weight: 700;">Account Name</th>
+              <th style="padding: 8px 12px; border: 1px solid #334155; text-align: right; font-weight: 700;">Closing Balance</th>
             </tr>
           </thead>
           <tbody>
-            ${accounts
-              .map((a) => {
-                const bal = getHistoricalBalanceForAccount(a.name, filterDate);
-                return `<tr>
-                  <td style="padding: 8px 12px; border: 1px solid #1e293b; color: #f8fafc; font-weight: 500;">${a.name}</td>
-                  <td style="padding: 8px 12px; border: 1px solid #1e293b; text-align: right; font-family: monospace; font-weight: 600; color: #34d399;">${
-                    hide ? '********' : bal.toFixed(2)
-                  }</td>
-                </tr>`;
-              })
-              .join('')}
+            ${accounts.map((a, idx) => {
+              const bal = getHistoricalBalanceForAccount(a.name, filterDate);
+              const bg = idx % 2 === 0 ? '#0f172a' : '#182235';
+              return `<tr style="background: ${bg};">
+                <td style="padding: 8px 12px; border: 1px solid #334155; font-weight: 600; color: #f8fafc;">${a.name}</td>
+                <td style="padding: 8px 12px; border: 1px solid #334155; text-align: right; font-family: monospace; font-weight: 700; color: ${bal >= 0 ? '#34d399' : '#f87171'};">
+                  ${hide ? '********' : (bal < 0 ? '-' : '') + '₹' + Math.abs(bal).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </td>
+              </tr>`;
+            }).join('')}
           </tbody>
         </table>
 
-        <div style="font-size: 14px; font-weight: 700; color: #f59e0b; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px;">Transactions for ${filterDate}</div>
+        <!-- TRANSACTIONS TABLE -->
+        <div style="font-size: 13px; font-weight: 700; color: #f59e0b; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px;">
+          Transactions for ${filterDate} (${currentDayEntries.length})
+        </div>
         <table style="width: 100%; border-collapse: collapse; font-size: 12px;">
           <thead>
             <tr style="background: #1e293b; color: #cbd5e1;">
-              <th style="padding: 8px 10px; border: 1px solid #334155; text-align: left;">Name</th>
-              <th style="padding: 8px 10px; border: 1px solid #334155; text-align: left;">Purpose</th>
-              <th style="padding: 8px 10px; border: 1px solid #334155; text-align: left;">Account</th>
-              <th style="padding: 8px 10px; border: 1px solid #334155; text-align: right; color: #f87171;">Debit (Dr)</th>
-              <th style="padding: 8px 10px; border: 1px solid #334155; text-align: right; color: #4ade80;">Credit (Cr)</th>
-              <th style="padding: 8px 10px; border: 1px solid #334155; text-align: left;">Note</th>
+              <th style="padding: 8px 10px; border: 1px solid #334155; text-align: left; font-weight: 700;">Name</th>
+              <th style="padding: 8px 10px; border: 1px solid #334155; text-align: left; font-weight: 700;">Purpose</th>
+              <th style="padding: 8px 10px; border: 1px solid #334155; text-align: left; font-weight: 700;">Account</th>
+              <th style="padding: 8px 10px; border: 1px solid #334155; text-align: right; font-weight: 700; color: #f87171;">Debit (Dr)</th>
+              <th style="padding: 8px 10px; border: 1px solid #334155; text-align: right; font-weight: 700; color: #4ade80;">Credit (Cr)</th>
+              <th style="padding: 8px 10px; border: 1px solid #334155; text-align: left; font-weight: 700;">Note</th>
             </tr>
           </thead>
           <tbody>
-            ${currentDayEntries
-              .map(
-                (e) => `
-              <tr>
-                <td style="padding: 7px 10px; border: 1px solid #1e293b; color: #f8fafc; font-weight: 500;">${e.name || '—'}</td>
-                <td style="padding: 7px 10px; border: 1px solid #1e293b; color: #cbd5e1;">${e.purpose || '—'}</td>
-                <td style="padding: 7px 10px; border: 1px solid #1e293b; color: #94a3b8; font-family: monospace;">${e.accountName || '—'}</td>
-                <td style="padding: 7px 10px; border: 1px solid #1e293b; text-align: right; font-family: monospace; font-weight: 700; color: #f87171;">${
-                  e.type === 'Dr' ? Number(e.amount).toFixed(2) : ''
-                }</td>
-                <td style="padding: 7px 10px; border: 1px solid #1e293b; text-align: right; font-family: monospace; font-weight: 700; color: #4ade80;">${
-                  e.type === 'Cr' ? Number(e.amount).toFixed(2) : ''
-                }</td>
-                <td style="padding: 7px 10px; border: 1px solid #1e293b; color: #64748b; font-size: 11px;">${e.note || ''}</td>
+            ${currentDayEntries.map((e, idx) => {
+              const bg = idx % 2 === 0 ? '#0f172a' : '#182235';
+              return `
+              <tr style="background: ${bg};">
+                <td style="padding: 8px 10px; border: 1px solid #334155; color: #f8fafc; font-weight: 600;">${e.name || '—'}</td>
+                <td style="padding: 8px 10px; border: 1px solid #334155; color: #cbd5e1;">${e.purpose || '—'}</td>
+                <td style="padding: 8px 10px; border: 1px solid #334155; color: #94a3b8; font-family: monospace;">${e.accountName || '—'}</td>
+                <td style="padding: 8px 10px; border: 1px solid #334155; text-align: right; font-family: monospace; font-weight: 700; color: #f87171;">
+                  ${e.type === 'Dr' ? '₹' + Number(e.amount).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : ''}
+                </td>
+                <td style="padding: 8px 10px; border: 1px solid #334155; text-align: right; font-family: monospace; font-weight: 700; color: #4ade80;">
+                  ${e.type === 'Cr' ? '₹' + Number(e.amount).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : ''}
+                </td>
+                <td style="padding: 8px 10px; border: 1px solid #334155; color: #64748b; font-size: 11px;">${e.note || ''}</td>
               </tr>
-            `
-              )
-              .join('')}
-            ${
-              currentDayEntries.length === 0
-                ? `<tr><td colspan="6" style="text-align: center; padding: 18px; color: #64748b; border: 1px solid #1e293b;">No transactions recorded for this date</td></tr>`
-                : ''
-            }
+            `}).join('')}
+            ${currentDayEntries.length === 0 ? `
+              <tr><td colspan="6" style="text-align: center; padding: 20px; color: #64748b; border: 1px solid #334155; font-style: italic;">No transactions recorded for this date</td></tr>
+            ` : ''}
+          </tbody>
+          ${currentDayEntries.length > 0 ? `
+          <tfoot>
+            <tr style="background: #1e293b; font-weight: 800; border-top: 2px solid #334155;">
+              <td colspan="3" style="padding: 9px 10px; border: 1px solid #334155; text-align: left; text-transform: uppercase; color: #f59e0b;">Total Day Transactions</td>
+              <td style="padding: 9px 10px; border: 1px solid #334155; text-align: right; font-family: monospace; color: #f87171; font-size: 13px;">
+                ₹${dayTotals.totalDr.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </td>
+              <td style="padding: 9px 10px; border: 1px solid #334155; text-align: right; font-family: monospace; color: #4ade80; font-size: 13px;">
+                ₹${dayTotals.totalCr.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </td>
+              <td style="padding: 9px 10px; border: 1px solid #334155;"></td>
+            </tr>
+          </tfoot>
+          ` : ''}
+        </table>
+
+        <div style="margin-top: 22px; display: flex; justify-content: space-between; align-items: center; font-size: 11px; color: #64748b; border-top: 1px solid #334155; padding-top: 12px;">
+          <span>Generated by Corrugation Plant Daybook · Manoj Graphics</span>
+          <span>Timestamp: ${new Date().toLocaleString()}</span>
+        </div>
+        `
+        : `
+        <!-- LIGHT THEME (WHITE PAPER STATEMENT) -->
+        <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #0f172a; padding-bottom: 16px; margin-bottom: 22px;">
+          <div>
+            <div style="font-size: 24px; font-weight: 800; color: #0f172a; letter-spacing: -0.5px;">OFFICE DAYBOOK</div>
+            <div style="font-size: 13px; color: #64748b; margin-top: 3px;">Corrugation Plant Financial Record · Manoj Graphics</div>
+          </div>
+          <div style="text-align: right;">
+            <div style="font-size: 11px; font-weight: 700; color: #64748b; text-transform: uppercase;">Statement Date</div>
+            <div style="font-size: 18px; font-weight: 800; font-family: monospace; color: #d97706;">${filterDate}</div>
+          </div>
+        </div>
+
+        <!-- 4 KPI SUMMARY CARDS -->
+        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 12px; margin-bottom: 24px;">
+          <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 12px 14px;">
+            <div style="font-size: 10px; font-weight: 700; color: #64748b; text-transform: uppercase;">Opening Balance</div>
+            <div style="font-size: 17px; font-weight: 800; font-family: monospace; color: #0284c7; margin-top: 4px;">
+              ${hide ? '********' : '₹' + openingBalance.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </div>
+          </div>
+          <div style="background: #fef2f2; border: 1px solid #fecaca; border-radius: 10px; padding: 12px 14px;">
+            <div style="font-size: 10px; font-weight: 700; color: #991b1b; text-transform: uppercase;">Total Debit (Dr)</div>
+            <div style="font-size: 17px; font-weight: 800; font-family: monospace; color: #dc2626; margin-top: 4px;">
+              ₹${dayTotals.totalDr.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </div>
+          </div>
+          <div style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 10px; padding: 12px 14px;">
+            <div style="font-size: 10px; font-weight: 700; color: #166534; text-transform: uppercase;">Total Credit (Cr)</div>
+            <div style="font-size: 17px; font-weight: 800; font-family: monospace; color: #16a34a; margin-top: 4px;">
+              ₹${dayTotals.totalCr.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </div>
+          </div>
+          <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 12px 14px;">
+            <div style="font-size: 10px; font-weight: 700; color: #64748b; text-transform: uppercase;">Closing Balance</div>
+            <div style="font-size: 17px; font-weight: 800; font-family: monospace; color: #059669; margin-top: 4px;">
+              ${hide ? '********' : '₹' + closingBalance.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </div>
+          </div>
+        </div>
+
+        <!-- ACCOUNT BALANCES -->
+        <div style="font-size: 13px; font-weight: 700; color: #0f172a; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px;">Account Balances</div>
+        <table style="width: 100%; border-collapse: collapse; margin-bottom: 24px; font-size: 12px;">
+          <thead>
+            <tr style="background: #f1f5f9; color: #334155;">
+              <th style="padding: 8px 12px; border: 1px solid #cbd5e1; text-align: left; font-weight: 700;">Account Name</th>
+              <th style="padding: 8px 12px; border: 1px solid #cbd5e1; text-align: right; font-weight: 700;">Closing Balance</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${accounts.map((a, idx) => {
+              const bal = getHistoricalBalanceForAccount(a.name, filterDate);
+              const bg = idx % 2 === 0 ? '#ffffff' : '#f8fafc';
+              return `<tr style="background: ${bg};">
+                <td style="padding: 8px 12px; border: 1px solid #e2e8f0; font-weight: 600; color: #1e293b;">${a.name}</td>
+                <td style="padding: 8px 12px; border: 1px solid #e2e8f0; text-align: right; font-family: monospace; font-weight: 700; color: ${bal >= 0 ? '#059669' : '#dc2626'};">
+                  ${hide ? '********' : (bal < 0 ? '-' : '') + '₹' + Math.abs(bal).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </td>
+              </tr>`;
+            }).join('')}
           </tbody>
         </table>
 
-        <div style="margin-top: 20px; display: flex; justify-content: space-between; align-items: center; font-size: 11px; color: #64748b; border-top: 1px solid #1e293b; padding-top: 12px;">
-          <span>Generated by Corrugation Plant Daybook</span>
+        <!-- TRANSACTIONS TABLE -->
+        <div style="font-size: 13px; font-weight: 700; color: #0f172a; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px;">
+          Transactions for ${filterDate} (${currentDayEntries.length})
+        </div>
+        <table style="width: 100%; border-collapse: collapse; font-size: 12px;">
+          <thead>
+            <tr style="background: #0f172a; color: #ffffff;">
+              <th style="padding: 8px 10px; border: 1px solid #0f172a; text-align: left; font-weight: 700;">Name</th>
+              <th style="padding: 8px 10px; border: 1px solid #0f172a; text-align: left; font-weight: 700;">Purpose</th>
+              <th style="padding: 8px 10px; border: 1px solid #0f172a; text-align: left; font-weight: 700;">Account</th>
+              <th style="padding: 8px 10px; border: 1px solid #0f172a; text-align: right; font-weight: 700; color: #fca5a5;">Debit (Dr)</th>
+              <th style="padding: 8px 10px; border: 1px solid #0f172a; text-align: right; font-weight: 700; color: #86efac;">Credit (Cr)</th>
+              <th style="padding: 8px 10px; border: 1px solid #0f172a; text-align: left; font-weight: 700;">Note</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${currentDayEntries.map((e, idx) => {
+              const bg = idx % 2 === 0 ? '#ffffff' : '#f8fafc';
+              return `
+              <tr style="background: ${bg};">
+                <td style="padding: 8px 10px; border: 1px solid #e2e8f0; color: #0f172a; font-weight: 600;">${e.name || '—'}</td>
+                <td style="padding: 8px 10px; border: 1px solid #e2e8f0; color: #334155;">${e.purpose || '—'}</td>
+                <td style="padding: 8px 10px; border: 1px solid #e2e8f0; color: #475569; font-family: monospace;">${e.accountName || '—'}</td>
+                <td style="padding: 8px 10px; border: 1px solid #e2e8f0; text-align: right; font-family: monospace; font-weight: 700; color: #dc2626;">
+                  ${e.type === 'Dr' ? '₹' + Number(e.amount).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : ''}
+                </td>
+                <td style="padding: 8px 10px; border: 1px solid #e2e8f0; text-align: right; font-family: monospace; font-weight: 700; color: #16a34a;">
+                  ${e.type === 'Cr' ? '₹' + Number(e.amount).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : ''}
+                </td>
+                <td style="padding: 8px 10px; border: 1px solid #e2e8f0; color: #64748b; font-size: 11px;">${e.note || ''}</td>
+              </tr>
+            `}).join('')}
+            ${currentDayEntries.length === 0 ? `
+              <tr><td colspan="6" style="text-align: center; padding: 20px; color: #94a3b8; border: 1px solid #e2e8f0; font-style: italic;">No transactions recorded for this date</td></tr>
+            ` : ''}
+          </tbody>
+          ${currentDayEntries.length > 0 ? `
+          <tfoot>
+            <tr style="background: #f1f5f9; font-weight: 800; border-top: 2px solid #0f172a;">
+              <td colspan="3" style="padding: 9px 10px; border: 1px solid #cbd5e1; text-align: left; text-transform: uppercase; color: #0f172a;">Total Day Transactions</td>
+              <td style="padding: 9px 10px; border: 1px solid #cbd5e1; text-align: right; font-family: monospace; color: #dc2626; font-size: 13px;">
+                ₹${dayTotals.totalDr.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </td>
+              <td style="padding: 9px 10px; border: 1px solid #cbd5e1; text-align: right; font-family: monospace; color: #16a34a; font-size: 13px;">
+                ₹${dayTotals.totalCr.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </td>
+              <td style="padding: 9px 10px; border: 1px solid #cbd5e1;"></td>
+            </tr>
+          </tfoot>
+          ` : ''}
+        </table>
+
+        <div style="margin-top: 22px; display: flex; justify-content: space-between; align-items: center; font-size: 11px; color: #64748b; border-top: 1px solid #e2e8f0; padding-top: 12px;">
+          <span>Generated by Corrugation Plant Daybook · Manoj Graphics</span>
           <span>Timestamp: ${new Date().toLocaleString()}</span>
         </div>
-      `;
+        `;
 
-      document.body.appendChild(ssDiv);
-      await new Promise((resolve) => setTimeout(resolve, 80));
+      wrapper.appendChild(reportDiv);
+      document.body.appendChild(wrapper);
+      await new Promise((resolve) => setTimeout(resolve, 100));
 
-      const dataUrl = await toPng(ssDiv, {
+      const dataUrl = await toPng(reportDiv, {
         pixelRatio: 2,
-        backgroundColor: '#090d16',
+        backgroundColor: isDark ? '#0f172a' : '#ffffff',
         cacheBust: true,
       });
 
       let blob: Blob | null = null;
       try {
-        blob = await toBlob(ssDiv, {
+        blob = await toBlob(reportDiv, {
           pixelRatio: 2,
-          backgroundColor: '#090d16',
+          backgroundColor: isDark ? '#0f172a' : '#ffffff',
         });
       } catch (be) {
         console.warn('Blob generation error:', be);
       }
-      document.body.removeChild(ssDiv);
 
       // Trigger automatic direct download
       try {
         const link = document.createElement('a');
-        link.download = `daybook-${filterDate}.png`;
+        link.download = `Daybook-${filterDate}.png`;
         link.href = dataUrl;
         document.body.appendChild(link);
         link.click();
@@ -918,15 +1092,20 @@ export const DaybookView: React.FC = () => {
       }
 
       // Always show preview modal with copy and direct download options
+      setSsTheme(themeToUse);
       setScreenshotPreview({
         url: dataUrl,
         blob,
         date: filterDate,
+        theme: themeToUse,
       });
     } catch (err: any) {
       console.error('Daybook screenshot error:', err);
       setSsErrorMessage(`Screenshot capture failed: ${err.message || 'Unknown error'}`);
     } finally {
+      if (wrapper && document.body.contains(wrapper)) {
+        document.body.removeChild(wrapper);
+      }
       setIsCapturingSS(false);
     }
   };
@@ -1049,7 +1228,7 @@ export const DaybookView: React.FC = () => {
           {/* Direct Download PNG Button */}
           <button
             type="button"
-            onClick={handleCaptureSS}
+            onClick={() => handleCaptureSS()}
             disabled={isCapturingSS}
             className="px-3.5 py-1.5 rounded-xl text-xs font-bold bg-amber-500 hover:bg-amber-400 text-slate-950 flex items-center gap-1.5 transition-all shadow-sm cursor-pointer disabled:opacity-50"
             title="Download Daybook Financial Report as PNG Image"
@@ -1061,7 +1240,7 @@ export const DaybookView: React.FC = () => {
           {/* SS Preview Button */}
           <button
             type="button"
-            onClick={handleCaptureSS}
+            onClick={() => handleCaptureSS()}
             disabled={isCapturingSS}
             className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-slate-900 border border-slate-800 text-slate-200 hover:bg-slate-800 hover:text-white flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
             title="Preview Screenshot Image of Daybook (SS)"
@@ -2169,18 +2348,44 @@ export const DaybookView: React.FC = () => {
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-150">
           <div className="bg-slate-900 border border-slate-700 w-full max-w-4xl max-h-[90vh] rounded-2xl shadow-2xl flex flex-col overflow-hidden">
             {/* Header */}
-            <div className="px-5 py-3.5 border-b border-slate-800 flex items-center justify-between bg-slate-950/80 shrink-0">
+            <div className="px-5 py-3.5 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3 bg-slate-950/80 shrink-0">
               <div className="flex items-center gap-2">
                 <Camera className="w-4 h-4 text-amber-400" />
                 <h3 className="text-sm font-bold text-white">
-                  Daybook Screenshot Preview
+                  Daybook Statement Preview
                 </h3>
                 <span className="text-xs font-mono text-amber-400 bg-amber-950/60 border border-amber-800/50 px-2 py-0.5 rounded">
                   {screenshotPreview.date}
                 </span>
               </div>
 
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                {/* Theme Selector (White Paper vs Dark Slate) */}
+                <div className="flex items-center p-0.5 bg-slate-800 rounded-lg border border-slate-700 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => handleCaptureSS('light')}
+                    className={`px-2.5 py-1 rounded font-semibold transition-colors cursor-pointer ${
+                      screenshotPreview.theme === 'light'
+                        ? 'bg-amber-500 text-slate-950 font-bold shadow-xs'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    White Paper
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleCaptureSS('dark')}
+                    className={`px-2.5 py-1 rounded font-semibold transition-colors cursor-pointer ${
+                      screenshotPreview.theme === 'dark'
+                        ? 'bg-amber-500 text-slate-950 font-bold shadow-xs'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    Dark Slate
+                  </button>
+                </div>
+
                 <button
                   type="button"
                   onClick={handleCopyScreenshot}
@@ -2202,7 +2407,7 @@ export const DaybookView: React.FC = () => {
 
                 <a
                   href={screenshotPreview.url}
-                  download={`daybook-${screenshotPreview.date}.png`}
+                  download={`Daybook-${screenshotPreview.date}.png`}
                   className="px-3.5 py-1.5 rounded-xl text-xs font-bold bg-amber-500 hover:bg-amber-400 text-slate-950 flex items-center gap-1.5 transition-colors cursor-pointer shadow-sm"
                   title="Download image file"
                 >
@@ -2222,11 +2427,11 @@ export const DaybookView: React.FC = () => {
             </div>
 
             {/* Image Preview Body */}
-            <div className="flex-1 overflow-y-auto p-4 bg-slate-950/90 text-center">
+            <div className={`flex-1 overflow-y-auto p-4 text-center ${screenshotPreview.theme === 'light' ? 'bg-slate-300/90' : 'bg-slate-950/90'}`}>
               <img
                 src={screenshotPreview.url}
-                alt={`Daybook screenshot for ${screenshotPreview.date}`}
-                className="max-w-full h-auto mx-auto rounded-xl border border-slate-800 shadow-xl"
+                alt={`Daybook statement for ${screenshotPreview.date}`}
+                className="max-w-full h-auto mx-auto rounded-xl border border-slate-700/80 shadow-2xl"
               />
             </div>
 
