@@ -26,24 +26,27 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
 
     setIsLoading(true);
 
-    // Support both admin/admin (Master Console) and admin/factory (Factory Floor)
+    // Support Office Master (ID: mga, Password: mga@1234) and Factory Floor (ID: admin, Password: factory)
     setTimeout(() => {
       if (trimmedId.toLowerCase() === 'admin' && trimmedPw === 'factory') {
         setIsLoading(false);
         onLoginSuccess('factory');
-      } else if (trimmedId.toLowerCase() === 'admin' && trimmedPw === 'admin') {
+      } else if (
+        (trimmedId.toLowerCase() === 'mga' && trimmedPw === 'mga@1234') ||
+        (trimmedId.toLowerCase() === 'admin' && (trimmedPw === 'mga@1234' || trimmedPw === 'admin'))
+      ) {
         setIsLoading(false);
-        onLoginSuccess('admin');
+        onLoginSuccess('mga');
       } else {
         setIsLoading(false);
-        setErrorMessage('Authentication failed. Valid logins: admin / admin (Office Master) or admin / factory (Factory Floor).');
+        setErrorMessage('Authentication failed. Valid logins: mga / mga@1234 (Office Master) or admin / factory (Factory Floor).');
       }
     }, 300);
   };
 
-  const handleFillAdmin = () => {
-    setOperatorId('admin');
-    setPassword('admin');
+  const handleFillOfficeMaster = () => {
+    setOperatorId('mga');
+    setPassword('mga@1234');
     setErrorMessage('');
   };
 
@@ -78,11 +81,11 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
           <div className="grid grid-cols-2 gap-2">
             <button
               type="button"
-              onClick={handleFillAdmin}
+              onClick={handleFillOfficeMaster}
               className="p-2 rounded-lg bg-slate-900 hover:bg-slate-850 border border-slate-800 hover:border-slate-700 text-left cursor-pointer transition-colors"
             >
               <div className="font-bold text-white text-[11px]">Office Master</div>
-              <div className="font-mono text-amber-400 text-[10px] mt-0.5">admin / admin</div>
+              <div className="font-mono text-amber-400 text-[10px] mt-0.5">mga / mga@1234</div>
             </button>
 
             <button
@@ -121,7 +124,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
                 type="text"
                 value={operatorId}
                 onChange={(e) => setOperatorId(e.target.value)}
-                placeholder="admin"
+                placeholder="mga"
                 required
                 autoFocus
                 className="w-full pl-9 pr-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:border-amber-500 font-mono"
@@ -150,7 +153,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
                 type={showPassword ? 'text' : 'password'}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                placeholder="admin"
+                placeholder="mga@1234"
                 required
                 className="w-full pl-9 pr-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:border-amber-500 font-mono"
               />
@@ -176,7 +179,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
         </form>
 
         <div className="mt-6 pt-4 border-t border-slate-800 text-center text-xs text-slate-500 font-mono">
-          Corrugation Plant Facility Node · Admin Access
+          Corrugation Plant Facility Node · Office Master (mga) & Factory Access
         </div>
 
       </div>

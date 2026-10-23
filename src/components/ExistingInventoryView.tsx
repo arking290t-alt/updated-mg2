@@ -87,6 +87,10 @@ export const ExistingInventoryView: React.FC<ExistingInventoryViewProps> = ({
   // Revert Confirmation Modal State
   const [revertConfirmItem, setRevertConfirmItem] = useState<InventoryItem | null>(null);
 
+  // Mark Stock Not Used Modal State
+  const [markNotUsedItem, setMarkNotUsedItem] = useState<InventoryItem | null>(null);
+  const [markNotUsedRemark, setMarkNotUsedRemark] = useState('');
+
   useEffect(() => {
     const handleClose = () => setActiveDropdownId(null);
     if (activeDropdownId) {
@@ -98,6 +102,11 @@ export const ExistingInventoryView: React.FC<ExistingInventoryViewProps> = ({
 
   const todayIso = new Date().toISOString().split('T')[0];
   const currentMonthIso = todayIso.slice(0, 7);
+
+  // Helper: check whether stock item is marked as Not Used
+  const isItemNotUsed = (item: InventoryItem): boolean => {
+    return Boolean(item.isNotUsed || item.status === 'Not Used');
+  };
 
   // Helper: check whether stock item is tied to a specific job
   const hasAttachedJob = (item: InventoryItem): boolean => {
@@ -117,13 +126,14 @@ export const ExistingInventoryView: React.FC<ExistingInventoryViewProps> = ({
     return true;
   };
 
-  // Separate inventory into Available vs Without Jobs vs Used
+  // Separate inventory into Available vs Inventory without Stock vs Used
+  // Items marked "Not Used" automatically move under "Inventory without Stock"
   const availableItems = inventory.filter(
-    (item) => !item.isUsed && hasAttachedJob(item)
+    (item) => !item.isUsed && !isItemNotUsed(item) && hasAttachedJob(item)
   );
 
   const withoutJobItems = inventory.filter(
-    (item) => !item.isUsed && !hasAttachedJob(item)
+    (item) => !item.isUsed && (isItemNotUsed(item) || !hasAttachedJob(item))
   );
 
   const usedItems = inventory.filter((item) => Boolean(item.isUsed));
@@ -167,8 +177,10 @@ export const ExistingInventoryView: React.FC<ExistingInventoryViewProps> = ({
       (item.receivingFrom && item.receivingFrom.toLowerCase().includes(searchQuery.toLowerCase())) ||
       (item.pressName && item.pressName.toLowerCase().includes(searchQuery.toLowerCase())) ||
       (item.jobName && item.jobName.toLowerCase().includes(searchQuery.toLowerCase())) ||
+      (item.jobType && item.jobType.toLowerCase().includes(searchQuery.toLowerCase())) ||
       (item.dieMaker && item.dieMaker.toLowerCase().includes(searchQuery.toLowerCase())) ||
-      (item.punchType && item.punchType.toLowerCase().includes(searchQuery.toLowerCase()));
+      (item.punchType && item.punchType.toLowerCase().includes(searchQuery.toLowerCase())) ||
+      (item.remark && item.remark.toLowerCase().includes(searchQuery.toLowerCase()));
 
     const matchesPrint =
       printFilter === 'All'
@@ -604,6 +616,38 @@ export const ExistingInventoryView: React.FC<ExistingInventoryViewProps> = ({
     setRevertConfirmItem(null);
   };
 
+  // Open "Mark Stock Not Used" Modal (User requirement: save with remark that stock was ordered of job name and job type)
+  const handleOpenMarkNotUsed = (item: InventoryItem) => {
+    setMarkNotUsedItem(item);
+    const jobName = item.jobName || item.usedJobName || 'General';
+    const jobType = item.jobType || item.usedJobType || 'Corrugated Box';
+    setMarkNotUsedRemark(`Stock was ordered of (${jobName}) and (${jobType})`);
+  };
+
+  const handleConfirmMarkNotUsed = async () => {
+    if (!markNotUsedItem || !onUpdateInventoryDetails) return;
+    const fallbackRemark = `Stock was ordered of (${markNotUsedItem.jobName || 'General'}) and (${markNotUsedItem.jobType || 'Standard'})`;
+    const finalRemark = markNotUsedRemark.trim() || fallbackRemark;
+
+    await onUpdateInventoryDetails(markNotUsedItem.id, {
+      isNotUsed: true,
+      status: 'Not Used',
+      remark: finalRemark,
+      notUsedAt: formatReceivedTimestamp(),
+    });
+
+    setMarkNotUsedItem(null);
+    setInventoryTab('without_jobs'); // User requirement: stock should be under inventory without stock
+  };
+
+  const handleRestoreToAvailable = async (item: InventoryItem) => {
+    if (!onUpdateInventoryDetails) return;
+    await onUpdateInventoryDetails(item.id, {
+      isNotUsed: false,
+      status: item.receivedAt ? 'Received' : 'Not Received',
+    });
+  };
+
   return (
     <div className="space-y-5">
       
@@ -679,7 +723,7 @@ export const ExistingInventoryView: React.FC<ExistingInventoryViewProps> = ({
           }`}
         >
           <Layers className="w-4 h-4" />
-          <span>Inventory without Jobs</span>
+          <span>Inventory without Stock</span>
           <span className={`px-2 py-0.5 rounded-full text-[11px] font-mono ${
             inventoryTab === 'without_jobs' ? 'bg-slate-950/30 text-slate-950 font-black' : 'bg-slate-800 text-slate-300'
           }`}>
@@ -887,7 +931,7 @@ export const ExistingInventoryView: React.FC<ExistingInventoryViewProps> = ({
                         }`}
                       >
                         {item.isPrinted ? <Printer className="w-3 h-3" /> : <FileText className="w-3 h-3" />}
-                        <span>{item.isPrinted ? `Printed (${item.pressName || 'Assigned'})` : 'Non-Printed'}</span>
+                        <span>{item.isPrinted ? `Printed${item.printType ? ` [${item.printType}]` : ''} (${item.pressName || 'Assigned'})` : 'Non-Printed'}</span>
                       </span>
 
                       <div className="flex flex-wrap items-center gap-1.5">
@@ -949,6 +993,17 @@ export const ExistingInventoryView: React.FC<ExistingInventoryViewProps> = ({
                         <span>Mark as Used</span>
                       </button>
 
+                      {/* MARK STOCK NOT USED (Moves to Inventory without Stock with remark) */}
+                      <button
+                        type="button"
+                        onClick={() => handleOpenMarkNotUsed(item)}
+                        className="px-2.5 py-1.5 text-xs font-semibold text-amber-300 hover:text-white bg-amber-950/40 hover:bg-amber-900/60 border border-amber-800/50 rounded-lg transition-colors cursor-pointer flex items-center gap-1.5"
+                        title="Mark stock not used (moves to Inventory without Stock)"
+                      >
+                        <Archive className="w-3.5 h-3.5 text-amber-400" />
+                        <span>Mark Not Used</span>
+                      </button>
+
                       <button
                         type="button"
                         onClick={() => setDetailItem(item)}
@@ -989,6 +1044,18 @@ export const ExistingInventoryView: React.FC<ExistingInventoryViewProps> = ({
                             >
                               <CheckSquare className="w-3.5 h-3.5 text-amber-400" />
                               <span>Mark as Used...</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setActiveDropdownId(null);
+                                handleOpenMarkNotUsed(item);
+                              }}
+                              className="w-full px-3 py-2 text-xs font-semibold text-amber-300 hover:bg-amber-950/40 flex items-center gap-2 cursor-pointer transition-colors"
+                            >
+                              <Archive className="w-3.5 h-3.5 text-amber-400" />
+                              <span>Mark Stock Not Used...</span>
                             </button>
 
                             <button
@@ -1270,15 +1337,22 @@ export const ExistingInventoryView: React.FC<ExistingInventoryViewProps> = ({
                             }`}
                           >
                             {item.isPrinted ? <Printer className="w-3 h-3" /> : <FileText className="w-3 h-3" />}
-                            <span>{item.isPrinted ? `Printed (${item.pressName || 'Assigned'})` : 'Non-Printed'}</span>
+                            <span>{item.isPrinted ? `Printed${item.printType ? ` [${item.printType}]` : ''} (${item.pressName || 'Assigned'})` : 'Non-Printed'}</span>
                           </span>
                         )}
 
-                        {/* Unassigned Job Badge */}
-                        <span className="px-2.5 py-0.5 rounded text-[11px] font-mono font-semibold bg-sky-950/70 text-sky-300 border border-sky-800/70 flex items-center gap-1">
-                          <Layers className="w-3 h-3 text-sky-400" />
-                          <span>Without Job (Unassigned Buffer)</span>
-                        </span>
+                        {/* Unassigned / Stock Not Used Badge */}
+                        {isItemNotUsed(item) ? (
+                          <span className="px-2.5 py-0.5 rounded text-[11px] font-mono font-bold bg-amber-950/80 text-amber-300 border border-amber-800 flex items-center gap-1">
+                            <AlertTriangle className="w-3 h-3 text-amber-400" />
+                            <span>Stock Not Used</span>
+                          </span>
+                        ) : (
+                          <span className="px-2.5 py-0.5 rounded text-[11px] font-mono font-semibold bg-sky-950/70 text-sky-300 border border-sky-800/70 flex items-center gap-1">
+                            <Layers className="w-3 h-3 text-sky-400" />
+                            <span>Without Job (Unassigned Buffer)</span>
+                          </span>
+                        )}
                       </div>
 
                       {/* Details Grid */}
@@ -1297,9 +1371,26 @@ export const ExistingInventoryView: React.FC<ExistingInventoryViewProps> = ({
 
                         <div className="flex items-center gap-1.5">
                           <Briefcase className="w-3.5 h-3.5 text-sky-400" />
-                          <span>Allocation: <strong className="text-sky-300">Unassigned (Ready for use)</strong></span>
+                          <span>Allocation: <strong className={isItemNotUsed(item) ? 'text-amber-300' : 'text-sky-300'}>
+                            {isItemNotUsed(item) ? 'Marked Not Used' : 'Unassigned (Ready for use)'}
+                          </strong></span>
                         </div>
                       </div>
+
+                      {/* Remark for Stock Not Used */}
+                      {(item.remark || isItemNotUsed(item)) && (
+                        <div className="p-2.5 rounded-xl bg-amber-950/30 border border-amber-800/70 text-xs text-amber-200 flex items-start gap-2">
+                          <Info className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                          <div className="space-y-0.5">
+                            <span className="text-[10px] font-mono uppercase tracking-wider text-amber-400 font-bold block">
+                              Remark:
+                            </span>
+                            <p className="text-amber-100 font-semibold">
+                              {item.remark || `Stock was ordered of (${item.jobName || 'Job'}) and (${item.jobType || 'Job Type'})`}
+                            </p>
+                          </div>
+                        </div>
+                      )}
 
                       {item.notes && (
                         <p className="text-xs text-slate-400 italic">
@@ -1320,7 +1411,20 @@ export const ExistingInventoryView: React.FC<ExistingInventoryViewProps> = ({
                       </div>
 
                       <div className="flex items-center gap-2 relative">
-                        {/* PROMINENT MARK USED ACTION (User Request: No mark receive option, only mark used with Job Name & Job Type) */}
+                        {/* Restore Available Button for items marked Not Used */}
+                        {isItemNotUsed(item) && (
+                          <button
+                            type="button"
+                            onClick={() => handleRestoreToAvailable(item)}
+                            className="px-2.5 py-1.5 text-xs font-semibold text-emerald-300 hover:text-white bg-emerald-950/50 hover:bg-emerald-900/60 border border-emerald-800/60 rounded-lg transition-colors cursor-pointer flex items-center gap-1"
+                            title="Restore this stock back to Available Inventory"
+                          >
+                            <RotateCcw className="w-3.5 h-3.5 text-emerald-400" />
+                            <span>Restore Available</span>
+                          </button>
+                        )}
+
+                        {/* PROMINENT MARK USED ACTION */}
                         <button
                           type="button"
                           onClick={() => handleOpenMarkUsed(item)}
@@ -2203,7 +2307,7 @@ export const ExistingInventoryView: React.FC<ExistingInventoryViewProps> = ({
                         ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
                         : 'bg-slate-800 text-slate-300'
                     }`}>
-                      {item.isPrinted ? `Printed (${item.pressName || 'Assigned'})` : 'Non-Printed (Plain Kraft)'}
+                      {item.isPrinted ? `Printed${item.printType ? ` [${item.printType}]` : ''} (${item.pressName || 'Assigned'})` : 'Non-Printed (Plain Kraft)'}
                     </span>
                   </div>
                   <div className="flex items-center justify-between">
@@ -2225,6 +2329,14 @@ export const ExistingInventoryView: React.FC<ExistingInventoryViewProps> = ({
                       <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
                         In-House Existing Stock
                       </span>
+                    </div>
+                  )}
+                  {(item.remark || isItemNotUsed(item)) && (
+                    <div className="pt-2 border-t border-slate-850">
+                      <span className="text-amber-400 font-bold block mb-0.5">Stock Not Used Remark:</span>
+                      <p className="text-amber-200 font-medium">
+                        {item.remark || `Stock was ordered of (${item.jobName || 'Job'}) and (${item.jobType || 'Job Type'})`}
+                      </p>
                     </div>
                   )}
                   {item.notes && !isUsed && (
@@ -2286,18 +2398,57 @@ export const ExistingInventoryView: React.FC<ExistingInventoryViewProps> = ({
                       <span>Revert to Available</span>
                     </button>
                   )}
-                  {!isUsed && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setDetailItem(null);
-                        handleOpenMarkUsed(item);
-                      }}
-                      className="px-3 py-1.5 text-xs font-bold text-slate-950 bg-amber-400 hover:bg-amber-300 rounded-lg transition-colors cursor-pointer flex items-center gap-1.5"
-                    >
-                      <CheckSquare className="w-3.5 h-3.5 stroke-[2.5]" />
-                      <span>Mark as Used</span>
-                    </button>
+                  {!isUsed && !isItemNotUsed(item) && (
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setDetailItem(null);
+                          handleOpenMarkUsed(item);
+                        }}
+                        className="px-3 py-1.5 text-xs font-bold text-slate-950 bg-amber-400 hover:bg-amber-300 rounded-lg transition-colors cursor-pointer flex items-center gap-1.5"
+                      >
+                        <CheckSquare className="w-3.5 h-3.5 stroke-[2.5]" />
+                        <span>Mark as Used</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setDetailItem(null);
+                          handleOpenMarkNotUsed(item);
+                        }}
+                        className="px-3 py-1.5 text-xs font-semibold text-amber-300 hover:text-white bg-amber-950/40 hover:bg-amber-900/60 border border-amber-800/60 rounded-lg transition-colors cursor-pointer flex items-center gap-1.5"
+                      >
+                        <Archive className="w-3.5 h-3.5 text-amber-400" />
+                        <span>Mark Not Used</span>
+                      </button>
+                    </div>
+                  )}
+                  {!isUsed && isItemNotUsed(item) && (
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setDetailItem(null);
+                          handleRestoreToAvailable(item);
+                        }}
+                        className="px-3 py-1.5 text-xs font-semibold text-emerald-300 hover:text-white bg-emerald-950/50 hover:bg-emerald-900/60 border border-emerald-800/60 rounded-lg transition-colors cursor-pointer flex items-center gap-1.5"
+                      >
+                        <RotateCcw className="w-3.5 h-3.5 text-emerald-400" />
+                        <span>Restore to Available</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setDetailItem(null);
+                          handleOpenMarkUsed(item);
+                        }}
+                        className="px-3 py-1.5 text-xs font-bold text-slate-950 bg-amber-400 hover:bg-amber-300 rounded-lg transition-colors cursor-pointer flex items-center gap-1.5"
+                      >
+                        <CheckSquare className="w-3.5 h-3.5 stroke-[2.5]" />
+                        <span>Mark as Used</span>
+                      </button>
+                    </div>
                   )}
                 </div>
 
@@ -2501,6 +2652,93 @@ export const ExistingInventoryView: React.FC<ExistingInventoryViewProps> = ({
                   className="px-4 py-2 text-xs font-bold text-slate-950 bg-sky-400 hover:bg-sky-300 rounded-xl transition-colors cursor-pointer"
                 >
                   Save Quantity
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* =================================================================== */}
+      {/* MODAL 7: MARK STOCK NOT USED */}
+      {/* =================================================================== */}
+      {markNotUsedItem && (() => {
+        const item = markNotUsedItem;
+        const jobName = item.jobName || item.usedJobName || 'General';
+        const jobType = item.jobType || item.usedJobType || 'Corrugated Box';
+        const unit = item.unit || (item.category === 'Reel' ? 'KGs' : 'Units');
+
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-150">
+            <div className="w-full max-w-lg bg-slate-900 border border-amber-500/40 rounded-2xl p-6 shadow-2xl relative space-y-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-500/30 flex items-center justify-center shrink-0">
+                  <Archive className="w-5 h-5 stroke-[2.5]" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-white">Mark Stock as Not Used</h3>
+                  <p className="text-xs text-slate-400">Moves this stock under "Inventory without Stock" with an order remark</p>
+                </div>
+              </div>
+
+              {/* Item Info Summary */}
+              <div className="p-3.5 bg-slate-950 border border-slate-800 rounded-xl space-y-2 text-xs">
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-400">Stock Type:</span>
+                  <span className="font-bold text-white font-mono">{item.stockType}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-400">Board Size / Dimensions:</span>
+                  <span className="font-mono text-amber-300 font-semibold">{item.jobSize || item.punchType || 'Standard size'}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-400">Quantity:</span>
+                  <span className="font-mono text-white font-bold">{Number(item.quantity).toLocaleString()} {unit}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-400">Ordered For Job:</span>
+                  <span className="text-amber-400 font-bold">{jobName}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-400">Job Type:</span>
+                  <span className="text-slate-200 font-medium">{jobType}</span>
+                </div>
+              </div>
+
+              {/* Remark Field */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-slate-200 block">
+                  Remark (Saved with Stock Record) <span className="text-amber-400">*</span>
+                </label>
+                <textarea
+                  rows={3}
+                  value={markNotUsedRemark}
+                  onChange={(e) => setMarkNotUsedRemark(e.target.value)}
+                  placeholder="Enter remark..."
+                  className="w-full px-3.5 py-2.5 bg-slate-950 border border-slate-800 focus:border-amber-500 rounded-xl text-white text-xs font-mono focus:outline-none resize-none leading-relaxed"
+                  autoFocus
+                />
+                <p className="text-[11px] text-slate-400">
+                  This stock will be saved under <strong>Inventory without Stock</strong> with the above remark.
+                </p>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex items-center justify-end gap-3 pt-2 border-t border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setMarkNotUsedItem(null)}
+                  className="px-4 py-2 text-xs font-medium text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-xl transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmMarkNotUsed}
+                  className="px-4 py-2 text-xs font-bold text-slate-950 bg-amber-400 hover:bg-amber-300 active:bg-amber-500 rounded-xl transition-colors cursor-pointer flex items-center gap-1.5 shadow-md"
+                >
+                  <Archive className="w-4 h-4 stroke-[2.5]" />
+                  <span>Confirm Mark Not Used</span>
                 </button>
               </div>
             </div>

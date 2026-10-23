@@ -22,6 +22,7 @@ import {
   INITIAL_PRESS_NAMES,
   INITIAL_DIE_MAKERS,
   INITIAL_PUNCH_TYPES,
+  INITIAL_PRINT_TYPES,
   formatReceivedTimestamp
 } from '../types/job';
 import { Quotation } from '../types/quotation';
@@ -60,6 +61,7 @@ export interface FactorySettings {
   presses: string[];
   dieMakers: string[];
   punchTypes: string[];
+  printTypes: string[];
 }
 
 const JOBS_COLLECTION = 'jobs';
@@ -203,6 +205,7 @@ export function getPersistedSettings(): FactorySettings {
     presses: INITIAL_PRESS_NAMES,
     dieMakers: INITIAL_DIE_MAKERS,
     punchTypes: INITIAL_PUNCH_TYPES,
+    printTypes: INITIAL_PRINT_TYPES,
   };
 
   if (typeof window === 'undefined') return defaultSettings;
@@ -234,6 +237,10 @@ export function getPersistedSettings(): FactorySettings {
         Array.isArray(parsed.punchTypes) && parsed.punchTypes.length > 0
           ? parsed.punchTypes
           : INITIAL_PUNCH_TYPES,
+      printTypes:
+        Array.isArray(parsed.printTypes) && parsed.printTypes.length > 0
+          ? parsed.printTypes
+          : INITIAL_PRINT_TYPES,
     };
   } catch {
     return defaultSettings;
@@ -959,6 +966,10 @@ export function subscribeToFactorySettings(
             Array.isArray(data.punchTypes) && data.punchTypes.length > 0
               ? data.punchTypes
               : local.punchTypes,
+          printTypes:
+            Array.isArray(data.printTypes) && data.printTypes.length > 0
+              ? data.printTypes
+              : local.printTypes,
         };
 
         savePersistedSettings(newSettings);
@@ -973,6 +984,7 @@ export function subscribeToFactorySettings(
           presses: current.presses,
           dieMakers: current.dieMakers,
           punchTypes: current.punchTypes,
+          printTypes: current.printTypes,
           updatedAt: new Date().toISOString(),
         }).catch(() => {});
       }
@@ -1017,6 +1029,7 @@ export async function addCustomOptionToFirestore(
         presses: data.presses || INITIAL_PRESS_NAMES,
         dieMakers: data.dieMakers || INITIAL_DIE_MAKERS,
         punchTypes: data.punchTypes || INITIAL_PUNCH_TYPES,
+        printTypes: data.printTypes || INITIAL_PRINT_TYPES,
       };
     }
 

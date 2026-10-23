@@ -41,15 +41,17 @@ export interface InventoryItem {
   receivingFrom: string;
   isPrinted: boolean;
   pressName?: string;
+  printType?: string; // Print Type (e.g. Offset, Flexo, Screen, Digital, UV)
   quantity: number;
   unit?: string; // 'KGs' | 'Sheets' | 'Units'
   jobId?: string;
   jobName?: string;
   jobType?: string;
   orderedAt: string;
-  status: 'Received' | 'Not Received' | 'In Transit' | 'Used';
+  status: 'Received' | 'Not Received' | 'In Transit' | 'Used' | 'Not Used';
   isUrgent?: boolean;
   notes?: string;
+  remark?: string; // Remark (e.g. "Stock was ordered of [job name] and [job type]")
   category?: 'Stock' | 'Die' | 'Reel';
   dieMaker?: string;
   punchType?: string;
@@ -63,6 +65,8 @@ export interface InventoryItem {
   usedJobName?: string; // Job Name stock was consumed for
   usedJobType?: string; // Job Type stock was consumed for
   usedJobDescription?: string; // Job description / notes on stock consumption
+  isNotUsed?: boolean; // True if marked as stock not used
+  notUsedAt?: string; // Exact timestamp when marked as not used
 }
 
 export const formatReceivedTimestamp = (date: Date = new Date()): string => {
@@ -83,9 +87,11 @@ export interface StockItemEntry {
   receivingFrom: string;
   isPrinted: boolean;
   pressName?: string;
+  printType?: string;
   quantity: number;
   unit?: string;
   notes?: string;
+  remark?: string;
   category?: 'Stock' | 'Die' | 'Reel';
   dieMaker?: string;
   punchType?: string;
@@ -93,7 +99,7 @@ export interface StockItemEntry {
   jobName?: string;
   jobType?: string;
   orderedAt?: string;
-  status?: 'Received' | 'Not Received' | 'In Transit' | 'Used';
+  status?: 'Received' | 'Not Received' | 'In Transit' | 'Used' | 'Not Used';
   isUrgent?: boolean;
   photoUrl?: string;
   pressPhotoUrl?: string;
@@ -105,6 +111,8 @@ export interface StockItemEntry {
   usedJobName?: string;
   usedJobType?: string;
   usedJobDescription?: string;
+  isNotUsed?: boolean;
+  notUsedAt?: string;
 }
 
 export const INITIAL_JOB_TYPES: string[] = [];
@@ -158,5 +166,16 @@ export const INITIAL_PUNCH_TYPES: string[] = [
   'Stripping Die Tool',
   'Embossing Punch',
   'Slotting & Perforation Die',
+];
+
+export const INITIAL_PRINT_TYPES: string[] = [
+  'Flexo Printing',
+  'Offset Printing',
+  'Screen Printing',
+  'Digital Printing',
+  'UV Printing',
+  '2-Color Flexo Printing',
+  '4-Color Flexo Printing',
+  'Multi-Color High Graphic',
 ];
 

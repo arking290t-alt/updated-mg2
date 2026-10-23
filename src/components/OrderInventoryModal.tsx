@@ -35,6 +35,7 @@ import {
   INITIAL_PRESS_NAMES,
   INITIAL_DIE_MAKERS, 
   INITIAL_PUNCH_TYPES, 
+  INITIAL_PRINT_TYPES,
   formatReceivedTimestamp 
 } from '../types/job';
 import { PhotoDropzone } from './PhotoDropzone';
@@ -54,6 +55,9 @@ interface OrderInventoryModalProps {
   availablePresses?: string[];
   onAddNewPress: (newPress: string) => void;
   onDeletePress?: (press: string) => void;
+  availablePrintTypes?: string[];
+  onAddNewPrintType?: (newPrintType: string) => void;
+  onDeletePrintType?: (printType: string) => void;
   targetJob?: CorrugationJob | null;
   existingInventory?: InventoryItem[];
   // Die & Job options
@@ -79,6 +83,9 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
   availablePresses = INITIAL_PRESS_NAMES,
   onAddNewPress,
   onDeletePress,
+  availablePrintTypes = INITIAL_PRINT_TYPES,
+  onAddNewPrintType,
+  onDeletePrintType,
   targetJob,
   existingInventory = [],
   availableJobs = [],
@@ -95,6 +102,7 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
   const safeStockTypes = Array.isArray(availableStockTypes) && availableStockTypes.length > 0 ? availableStockTypes : INITIAL_STOCK_TYPES;
   const safeSuppliers = Array.isArray(availableSuppliers) && availableSuppliers.length > 0 ? availableSuppliers : COMMON_SUPPLIERS;
   const safePresses = Array.isArray(availablePresses) && availablePresses.length > 0 ? availablePresses : INITIAL_PRESS_NAMES;
+  const safePrintTypes = Array.isArray(availablePrintTypes) && availablePrintTypes.length > 0 ? availablePrintTypes : INITIAL_PRINT_TYPES;
   const safeDieMakers = Array.isArray(availableDieMakers) && availableDieMakers.length > 0 ? availableDieMakers : INITIAL_DIE_MAKERS;
   const safePunchTypes = Array.isArray(availablePunchTypes) && availablePunchTypes.length > 0 ? availablePunchTypes : INITIAL_PUNCH_TYPES;
   const safeJobTypes = Array.isArray(availableJobTypes) && availableJobTypes.length > 0 ? availableJobTypes : ['General Corrugation'];
@@ -222,6 +230,13 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
   const [isAddingNewPress, setIsAddingNewPress] = useState(false);
   const [newPressInput, setNewPressInput] = useState('');
 
+  // Print Type (Search & Save) - Configurable print types when stock has print enabled
+  const [printType, setPrintType] = useState(safePrintTypes[0] || 'Flexo Printing');
+  const [printTypeSearch, setPrintTypeSearch] = useState('');
+  const [isPrintTypeDropdownOpen, setIsPrintTypeDropdownOpen] = useState(false);
+  const [isAddingNewPrintType, setIsAddingNewPrintType] = useState(false);
+  const [newPrintTypeInput, setNewPrintTypeInput] = useState('');
+
   // Quantity (no measurement unit)
   const [quantity, setQuantity] = useState<number>(2500);
 
@@ -238,9 +253,9 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
   // MULTIPLE STOCKS QUEUE FOR JOB
   const [stockQueue, setStockQueue] = useState<StockItemEntry[]>([]);
 
-  // Deletion confirmation state for all items (staged stock, saved stock types, suppliers, presses)
+  // Deletion confirmation state for all items (staged stock, saved stock types, suppliers, presses, print types)
   interface DeleteTarget {
-    category: 'stock_item' | 'stock_type' | 'supplier' | 'press';
+    category: 'stock_item' | 'stock_type' | 'supplier' | 'press' | 'print_type';
     idOrName: string;
     label: string;
   }
@@ -272,6 +287,15 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
       typeof p === 'string' && p.toLowerCase().includes(pressSearch.trim().toLowerCase())
     );
   }, [safePresses, pressSearch]);
+
+  // Filtered Print Types
+  const filteredPrintTypes = useMemo(() => {
+    const list = Array.isArray(safePrintTypes) ? safePrintTypes.filter(Boolean) : [];
+    if (!printTypeSearch.trim()) return list;
+    return list.filter((p) =>
+      typeof p === 'string' && p.toLowerCase().includes(printTypeSearch.trim().toLowerCase())
+    );
+  }, [safePrintTypes, printTypeSearch]);
 
   // Filter existing inventory for available in-house stock items (MUST BE CALLED UNCONDITIONALLY BEFORE RETURN)
   const availableExistingStock = useMemo(() => {
@@ -406,6 +430,24 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
     setPressSearch('');
   };
 
+  // Handlers for Print Type
+  const handleSelectPrintType = (pt: string) => {
+    setPrintType(pt);
+    setIsPrintTypeDropdownOpen(false);
+    setPrintTypeSearch('');
+  };
+
+  const handleSavePrintType = (printTypeToAdd?: string) => {
+    const raw = (printTypeToAdd || newPrintTypeInput).trim();
+    if (!raw) return;
+    onAddNewPrintType?.(raw);
+    setPrintType(raw);
+    setNewPrintTypeInput('');
+    setIsAddingNewPrintType(false);
+    setIsPrintTypeDropdownOpen(false);
+    setPrintTypeSearch('');
+  };
+
   // Validate current single form inputs
   const validateCurrentItem = (): boolean => {
     if (!stockType.trim()) {
@@ -428,9 +470,15 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
       setErrorMessage(activeCategory === 'Reel' ? 'Please enter a valid Reel Quantity in KGs.' : 'Please enter a valid Quantity.');
       return false;
     }
-    if (activeCategory === 'Stock' && isPrinted && !pressName.trim()) {
-      setErrorMessage('Please select or add a Press Name for printed stock.');
-      return false;
+    if (activeCategory === 'Stock' && isPrinted) {
+      if (!printType.trim()) {
+        setErrorMessage('Please select or add a Print Type for printed stock.');
+        return false;
+      }
+      if (!pressName.trim()) {
+        setErrorMessage('Please select or add a Press Name for printed stock.');
+        return false;
+      }
     }
     return true;
   };
@@ -478,6 +526,7 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
       jobSize: jobSize.trim(),
       receivingFrom: receivingFrom.trim(),
       isPrinted: isReel ? false : isPrinted,
+      printType: isReel ? undefined : (isPrinted ? printType.trim() : undefined),
       pressName: isReel ? undefined : (isPrinted ? pressName.trim() : undefined),
       quantity: Number(quantity),
       unit: isReel ? 'KGs' : 'Units',
@@ -571,6 +620,10 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
         if (pressName === deleteConfirmTarget.idOrName) setPressName('');
         onDeletePress?.(deleteConfirmTarget.idOrName);
         break;
+      case 'print_type':
+        if (printType === deleteConfirmTarget.idOrName) setPrintType('');
+        onDeletePrintType?.(deleteConfirmTarget.idOrName);
+        break;
     }
 
     setDeleteConfirmTarget(null);
@@ -596,6 +649,7 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
         jobSize: jobSize.trim(),
         receivingFrom: receivingFrom.trim(),
         isPrinted: isReel ? false : isPrinted,
+        printType: isReel ? undefined : (isPrinted ? printType.trim() : undefined),
         pressName: isReel ? undefined : (isPrinted ? pressName.trim() : undefined),
         quantity: Number(quantity),
         unit: isReel ? 'KGs' : 'Units',
@@ -659,6 +713,7 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
         dieMaker: item.dieMaker,
         punchType: item.punchType,
         isPrinted: item.category === 'Reel' ? false : Boolean(item.isPrinted),
+        printType: item.category === 'Reel' ? undefined : (item.isPrinted ? item.printType : undefined),
         pressName: item.category === 'Reel' ? undefined : item.pressName,
         quantity: item.quantity,
         unit: item.unit || (item.category === 'Reel' ? 'KGs' : 'Units'),
@@ -848,7 +903,9 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
                           </span>
                         ) : (
                           <span className="px-1.5 py-0.2 rounded text-[10px] bg-slate-800 text-slate-300">
-                            {item.isPrinted ? `Printed (${item.pressName})` : 'Non-Printed'}
+                            {item.isPrinted
+                              ? `Printed (${[item.printType, item.pressName].filter(Boolean).join(' • ') || 'Press'})`
+                              : 'Non-Printed'}
                           </span>
                         )}
                         {item.isUrgent && (
@@ -1795,138 +1852,277 @@ export const OrderInventoryModal: React.FC<OrderInventoryModalProps> = ({
                 </button>
               </div>
 
-              {/* 5. PRESS NAME with Search and Save as requested */}
+              {/* 5. PRINT TYPE & PRESS NAME with Search and Save as requested */}
               {isPrinted && (
-                <div className="pt-2 relative animate-in fade-in duration-200">
-                  <div className="flex items-center justify-between mb-1.5">
-                    <label className="block text-xs font-medium text-amber-300">
-                      Press Name <span className="text-amber-400">*</span>
-                    </label>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setIsAddingNewPress(!isAddingNewPress);
-                        setIsPressDropdownOpen(false);
-                      }}
-                      className="text-[11px] text-amber-400 hover:text-amber-300 font-medium flex items-center gap-1 cursor-pointer"
-                    >
-                      <Plus className="w-3 h-3" />
-                      <span>{isAddingNewPress ? 'Select existing' : '+ Add Press'}</span>
-                    </button>
-                  </div>
-
-                  {isAddingNewPress && (
-                    <div className="p-3 bg-slate-900 border border-amber-500/40 rounded-xl space-y-2 mb-2">
-                      <span className="text-[11px] text-amber-400 font-medium">New Press Name:</span>
-                      <div className="flex gap-2">
-                        <input
-                          type="text"
-                          value={newPressInput}
-                          onChange={(e) => setNewPressInput(e.target.value)}
-                          placeholder="e.g. Bobst Expertline 1.6, Heidelberg 4-Color..."
-                          autoFocus
-                          className="flex-1 px-3 py-1.5 bg-slate-950 border border-slate-800 rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500"
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') {
-                              e.preventDefault();
-                              handleSavePress();
-                            }
-                          }}
-                        />
+                <div className="pt-2 space-y-3 animate-in fade-in duration-200">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    
+                    {/* OPTION: PRINT TYPE (SEARCH & SAVE AS REQUESTED) */}
+                    <div className="relative">
+                      <div className="flex items-center justify-between mb-1.5">
+                        <label className="block text-xs font-medium text-amber-300">
+                          Print Type <span className="text-amber-400">*</span>
+                        </label>
                         <button
                           type="button"
-                          onClick={() => handleSavePress()}
-                          className="px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-semibold rounded-lg transition-colors cursor-pointer"
+                          onClick={() => {
+                            setIsAddingNewPrintType(!isAddingNewPrintType);
+                            setIsPrintTypeDropdownOpen(false);
+                          }}
+                          className="text-[11px] text-amber-400 hover:text-amber-300 font-medium flex items-center gap-1 cursor-pointer"
                         >
-                          Save & Select
+                          <Plus className="w-3 h-3" />
+                          <span>{isAddingNewPrintType ? 'Select existing' : '+ Add Print Type'}</span>
                         </button>
                       </div>
-                    </div>
-                  )}
 
-                  <div
-                    onClick={() => setIsPressDropdownOpen(!isPressDropdownOpen)}
-                    className={`w-full px-3.5 py-2.5 bg-slate-900 border rounded-xl text-xs flex items-center justify-between cursor-pointer transition-colors ${
-                      isPressDropdownOpen ? 'border-amber-400' : 'border-slate-800 hover:border-slate-700'
-                    }`}
-                  >
-                    <div className="flex items-center gap-2 truncate">
-                      <Printer className="w-4 h-4 text-amber-400 shrink-0" />
-                      <span className={pressName ? 'text-white font-medium' : 'text-slate-500'}>
-                        {pressName || 'Search and select press name...'}
-                      </span>
-                    </div>
-                    <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform ${isPressDropdownOpen ? 'rotate-180' : ''}`} />
-                  </div>
-
-                  {isPressDropdownOpen && (
-                    <div className="absolute left-0 right-0 top-full mt-1.5 z-30 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl overflow-hidden p-2">
-                      <div className="relative mb-2">
-                        <Search className="w-3.5 h-3.5 text-slate-500 absolute left-3 top-2.5" />
-                        <input
-                          type="text"
-                          value={pressSearch}
-                          onChange={(e) => setPressSearch(e.target.value)}
-                          placeholder="Search press machines..."
-                          autoFocus
-                          className="w-full pl-8 pr-3 py-1.5 bg-slate-950 border border-slate-800 rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500"
-                        />
-                      </div>
-
-                      <div className="max-h-40 overflow-y-auto space-y-1">
-                        <div className="px-2 py-1 text-[10px] font-mono text-slate-400 uppercase tracking-wider flex items-center justify-between border-b border-slate-800 mb-1">
-                          <span>Saved Presses ({filteredPresses.length})</span>
-                          {pressSearch && <span>Filter: "{pressSearch}"</span>}
-                        </div>
-
-                        {filteredPresses.length > 0 ? (
-                          filteredPresses.map((p) => (
-                            <div
-                              key={p}
-                              className={`px-3 py-1.5 text-xs rounded-lg flex items-center justify-between cursor-pointer transition-colors group ${
-                                pressName === p
-                                  ? 'bg-amber-500/10 text-amber-300 font-semibold'
-                                  : 'text-slate-300 hover:bg-slate-800 hover:text-white'
-                              }`}
+                      {isAddingNewPrintType && (
+                        <div className="p-3 bg-slate-900 border border-amber-500/40 rounded-xl space-y-2 mb-2">
+                          <span className="text-[11px] text-amber-400 font-medium">New Print Type:</span>
+                          <div className="flex gap-2">
+                            <input
+                              type="text"
+                              value={newPrintTypeInput}
+                              onChange={(e) => setNewPrintTypeInput(e.target.value)}
+                              placeholder="e.g. Offset, Flexo, Screen, UV, Digital..."
+                              autoFocus
+                              className="flex-1 px-3 py-1.5 bg-slate-950 border border-slate-800 rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500"
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                  e.preventDefault();
+                                  handleSavePrintType();
+                                }
+                              }}
+                            />
+                            <button
+                              type="button"
+                              onClick={() => handleSavePrintType()}
+                              className="px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-semibold rounded-lg transition-colors cursor-pointer"
                             >
-                              <div
-                                onClick={() => handleSelectPress(p)}
-                                className="flex-1 flex items-center gap-2 truncate"
-                              >
-                                <span className="truncate">{p}</span>
-                                {pressName === p && <Check className="w-3.5 h-3.5 text-amber-400 shrink-0" />}
-                              </div>
-
-                              {onDeletePress && (
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setDeleteConfirmTarget({
-                                      category: 'press',
-                                      idOrName: p,
-                                      label: p,
-                                    });
-                                  }}
-                                  className="p-1 text-slate-500 hover:text-rose-400 hover:bg-slate-700/50 rounded transition-colors opacity-70 group-hover:opacity-100 ml-2"
-                                  title={`Delete saved press "${p}"`}
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </button>
-                              )}
-                            </div>
-                          ))
-                        ) : (
-                          <div className="p-3 text-center text-xs text-slate-400">
-                            <span>No saved presses match "{pressSearch}".</span>
-                            <p className="text-[11px] text-slate-500 mt-1">
-                              Only saved items are shown in search.
-                            </p>
+                              Save & Select
+                            </button>
                           </div>
-                        )}
+                        </div>
+                      )}
+
+                      <div
+                        onClick={() => setIsPrintTypeDropdownOpen(!isPrintTypeDropdownOpen)}
+                        className={`w-full px-3.5 py-2.5 bg-slate-900 border rounded-xl text-xs flex items-center justify-between cursor-pointer transition-colors ${
+                          isPrintTypeDropdownOpen ? 'border-amber-400' : 'border-slate-800 hover:border-slate-700'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2 truncate">
+                          <Tag className="w-4 h-4 text-amber-400 shrink-0" />
+                          <span className={printType ? 'text-white font-medium' : 'text-slate-500'}>
+                            {printType || 'Search and select print type...'}
+                          </span>
+                        </div>
+                        <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform ${isPrintTypeDropdownOpen ? 'rotate-180' : ''}`} />
                       </div>
+
+                      {isPrintTypeDropdownOpen && (
+                        <div className="absolute left-0 right-0 top-full mt-1.5 z-30 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl overflow-hidden p-2">
+                          <div className="relative mb-2">
+                            <Search className="w-3.5 h-3.5 text-slate-500 absolute left-3 top-2.5" />
+                            <input
+                              type="text"
+                              value={printTypeSearch}
+                              onChange={(e) => setPrintTypeSearch(e.target.value)}
+                              placeholder="Search print types..."
+                              autoFocus
+                              className="w-full pl-8 pr-3 py-1.5 bg-slate-950 border border-slate-800 rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500"
+                            />
+                          </div>
+
+                          <div className="max-h-40 overflow-y-auto space-y-1">
+                            <div className="px-2 py-1 text-[10px] font-mono text-slate-400 uppercase tracking-wider flex items-center justify-between border-b border-slate-800 mb-1">
+                              <span>Saved Print Types ({filteredPrintTypes.length})</span>
+                              {printTypeSearch && <span>Filter: "{printTypeSearch}"</span>}
+                            </div>
+
+                            {filteredPrintTypes.length > 0 ? (
+                              filteredPrintTypes.map((pt) => (
+                                <div
+                                  key={pt}
+                                  className={`px-3 py-1.5 text-xs rounded-lg flex items-center justify-between cursor-pointer transition-colors group ${
+                                    printType === pt
+                                      ? 'bg-amber-500/10 text-amber-300 font-semibold'
+                                      : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+                                  }`}
+                                >
+                                  <div
+                                    onClick={() => handleSelectPrintType(pt)}
+                                    className="flex-1 flex items-center gap-2 truncate"
+                                  >
+                                    <span className="truncate">{pt}</span>
+                                    {printType === pt && <Check className="w-3.5 h-3.5 text-amber-400 shrink-0" />}
+                                  </div>
+
+                                  {onDeletePrintType && (
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setDeleteConfirmTarget({
+                                          category: 'print_type',
+                                          idOrName: pt,
+                                          label: pt,
+                                        });
+                                      }}
+                                      className="p-1 text-slate-500 hover:text-rose-400 hover:bg-slate-700/50 rounded transition-colors opacity-70 group-hover:opacity-100 ml-2"
+                                      title={`Delete saved print type "${pt}"`}
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
+                                  )}
+                                </div>
+                              ))
+                            ) : (
+                              <div className="p-3 text-center text-xs text-slate-400">
+                                <span>No saved print types match "{printTypeSearch}".</span>
+                                <p className="text-[11px] text-slate-500 mt-1">
+                                  Type above and click "+ Add Print Type" to save.
+                                </p>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
                     </div>
-                  )}
+
+                    {/* PRESS NAME */}
+                    <div className="relative">
+                      <div className="flex items-center justify-between mb-1.5">
+                        <label className="block text-xs font-medium text-amber-300">
+                          Press Name <span className="text-amber-400">*</span>
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsAddingNewPress(!isAddingNewPress);
+                            setIsPressDropdownOpen(false);
+                          }}
+                          className="text-[11px] text-amber-400 hover:text-amber-300 font-medium flex items-center gap-1 cursor-pointer"
+                        >
+                          <Plus className="w-3 h-3" />
+                          <span>{isAddingNewPress ? 'Select existing' : '+ Add Press'}</span>
+                        </button>
+                      </div>
+
+                      {isAddingNewPress && (
+                        <div className="p-3 bg-slate-900 border border-amber-500/40 rounded-xl space-y-2 mb-2">
+                          <span className="text-[11px] text-amber-400 font-medium">New Press Name:</span>
+                          <div className="flex gap-2">
+                            <input
+                              type="text"
+                              value={newPressInput}
+                              onChange={(e) => setNewPressInput(e.target.value)}
+                              placeholder="e.g. Bobst Expertline 1.6, Heidelberg 4-Color..."
+                              autoFocus
+                              className="flex-1 px-3 py-1.5 bg-slate-950 border border-slate-800 rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500"
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                  e.preventDefault();
+                                  handleSavePress();
+                                }
+                              }}
+                            />
+                            <button
+                              type="button"
+                              onClick={() => handleSavePress()}
+                              className="px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-semibold rounded-lg transition-colors cursor-pointer"
+                            >
+                              Save & Select
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      <div
+                        onClick={() => setIsPressDropdownOpen(!isPressDropdownOpen)}
+                        className={`w-full px-3.5 py-2.5 bg-slate-900 border rounded-xl text-xs flex items-center justify-between cursor-pointer transition-colors ${
+                          isPressDropdownOpen ? 'border-amber-400' : 'border-slate-800 hover:border-slate-700'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2 truncate">
+                          <Printer className="w-4 h-4 text-amber-400 shrink-0" />
+                          <span className={pressName ? 'text-white font-medium' : 'text-slate-500'}>
+                            {pressName || 'Search and select press name...'}
+                          </span>
+                        </div>
+                        <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform ${isPressDropdownOpen ? 'rotate-180' : ''}`} />
+                      </div>
+
+                      {isPressDropdownOpen && (
+                        <div className="absolute left-0 right-0 top-full mt-1.5 z-30 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl overflow-hidden p-2">
+                          <div className="relative mb-2">
+                            <Search className="w-3.5 h-3.5 text-slate-500 absolute left-3 top-2.5" />
+                            <input
+                              type="text"
+                              value={pressSearch}
+                              onChange={(e) => setPressSearch(e.target.value)}
+                              placeholder="Search press machines..."
+                              autoFocus
+                              className="w-full pl-8 pr-3 py-1.5 bg-slate-950 border border-slate-800 rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500"
+                            />
+                          </div>
+
+                          <div className="max-h-40 overflow-y-auto space-y-1">
+                            <div className="px-2 py-1 text-[10px] font-mono text-slate-400 uppercase tracking-wider flex items-center justify-between border-b border-slate-800 mb-1">
+                              <span>Saved Presses ({filteredPresses.length})</span>
+                              {pressSearch && <span>Filter: "{pressSearch}"</span>}
+                            </div>
+
+                            {filteredPresses.length > 0 ? (
+                              filteredPresses.map((p) => (
+                                <div
+                                  key={p}
+                                  className={`px-3 py-1.5 text-xs rounded-lg flex items-center justify-between cursor-pointer transition-colors group ${
+                                    pressName === p
+                                      ? 'bg-amber-500/10 text-amber-300 font-semibold'
+                                      : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+                                  }`}
+                                >
+                                  <div
+                                    onClick={() => handleSelectPress(p)}
+                                    className="flex-1 flex items-center gap-2 truncate"
+                                  >
+                                    <span className="truncate">{p}</span>
+                                    {pressName === p && <Check className="w-3.5 h-3.5 text-amber-400 shrink-0" />}
+                                  </div>
+
+                                  {onDeletePress && (
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setDeleteConfirmTarget({
+                                          category: 'press',
+                                          idOrName: p,
+                                          label: p,
+                                        });
+                                      }}
+                                      className="p-1 text-slate-500 hover:text-rose-400 hover:bg-slate-700/50 rounded transition-colors opacity-70 group-hover:opacity-100 ml-2"
+                                      title={`Delete saved press "${p}"`}
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
+                                  )}
+                                </div>
+                              ))
+                            ) : (
+                              <div className="p-3 text-center text-xs text-slate-400">
+                                <span>No saved presses match "{pressSearch}".</span>
+                                <p className="text-[11px] text-slate-500 mt-1">
+                                  Only saved items are shown in search.
+                                </p>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
 
                   {/* Press Run Proof / Plate Photo Upload with Drag and Drop */}
                   <div className="pt-2">

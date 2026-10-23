@@ -22,7 +22,7 @@ import {
   ArrowLeft,
   FileSpreadsheet,
 } from 'lucide-react';
-import html2canvas from 'html2canvas';
+import { toPng, toBlob } from 'html-to-image';
 import { Quotation, QuotationItem, DEFAULT_QUOTATION_NOTES } from '../types/quotation';
 import {
   LETTERHEAD_HEADER_DATA_URL,
@@ -330,7 +330,7 @@ export const QuotationView: React.FC = () => {
     }
   };
 
-  // Download high-resolution A4 PNG using html2canvas
+  // Download high-resolution A4 PNG using html-to-image (native browser SVG rendering, fully supports oklch)
   const handleDownloadQuotationPng = async (quotation: Quotation, pageIdx = 0) => {
     let el = document.getElementById(`letterhead-page-${quotation.id}-${pageIdx}`);
     
@@ -349,53 +349,57 @@ export const QuotationView: React.FC = () => {
       // Small pause to ensure all base64 images and layouts are fully painted
       await new Promise((resolve) => setTimeout(resolve, 100));
 
-      const canvas = await html2canvas(el, {
-        scale: 2, // 794 x 2 = 1588px, 1123 x 2 = 2246px (High-res A4 standard)
-        width: 794,
-        height: 1123,
-        backgroundColor: '#ffffff',
-        logging: false,
-        useCORS: false, // Not needed for embedded base64 data URLs
-        allowTaint: false, // Prevents security errors on canvas.toBlob / toDataURL
-      });
-
       const totalPages = Math.ceil((quotation.items?.length || 1) / itemsPerPage);
       const pageSuffix = totalPages > 1 ? `-Page${pageIdx + 1}` : '';
       const cleanCustomer = quotation.customerName.replace(/[^a-zA-Z0-9]/g, '_') || 'Quote';
       const filename = `Quotation-A4-${cleanCustomer}-${formatDisplayDate(quotation.date)}${pageSuffix}.png`;
 
-      // Preferred Blob download with fallback
-      canvas.toBlob((blob) => {
-        if (!blob) {
-          const dataUrl = canvas.toDataURL('image/png');
+      // Render high-res A4 PNG using browser-native engine (supports all modern CSS and oklch)
+      const dataUrl = await toPng(el, {
+        pixelRatio: 2, // 794 x 2 = 1588px, 1123 x 2 = 2246px (High-res A4 standard)
+        backgroundColor: '#ffffff',
+        cacheBust: true,
+      });
+
+      // Trigger instant direct download
+      const link = document.createElement('a');
+      link.download = filename;
+      link.href = dataUrl;
+      document.body.appendChild(link);
+      link.click();
+      setTimeout(() => {
+        if (document.body.contains(link)) {
+          document.body.removeChild(link);
+        }
+      }, 200);
+
+      setDownloadSuccessMessage(`Downloaded A4: ${filename}`);
+      setTimeout(() => setDownloadSuccessMessage(null), 3500);
+    } catch (e: any) {
+      console.error('Quotation download capture error:', e);
+      // Fallback: try blob conversion
+      try {
+        const blob = await toBlob(el, { pixelRatio: 2, backgroundColor: '#ffffff' });
+        if (blob) {
+          const blobUrl = URL.createObjectURL(blob);
           const link = document.createElement('a');
-          link.download = filename;
-          link.href = dataUrl;
+          const cleanCustomer = quotation.customerName.replace(/[^a-zA-Z0-9]/g, '_') || 'Quote';
+          link.download = `Quotation-A4-${cleanCustomer}-${formatDisplayDate(quotation.date)}.png`;
+          link.href = blobUrl;
           document.body.appendChild(link);
           link.click();
-          setTimeout(() => document.body.removeChild(link), 100);
-          setDownloadSuccessMessage(`Downloaded A4: ${filename}`);
+          setTimeout(() => {
+            document.body.removeChild(link);
+            URL.revokeObjectURL(blobUrl);
+          }, 1500);
+          setDownloadSuccessMessage(`Downloaded A4 Quotation`);
           setTimeout(() => setDownloadSuccessMessage(null), 3500);
           return;
         }
-
-        const blobUrl = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.download = filename;
-        link.href = blobUrl;
-        document.body.appendChild(link);
-        link.click();
-        setTimeout(() => {
-          document.body.removeChild(link);
-          URL.revokeObjectURL(blobUrl);
-        }, 1500);
-
-        setDownloadSuccessMessage(`Downloaded A4: ${filename}`);
-        setTimeout(() => setDownloadSuccessMessage(null), 3500);
-      }, 'image/png');
-    } catch (e: any) {
-      console.error('Screenshot capture error:', e);
-      alert(`Download failed: ${e?.message || 'Please use Print / PDF option to save as A4.'}`);
+      } catch (blobErr) {
+        console.warn('Blob fallback failed:', blobErr);
+      }
+      alert(`Download notice: ${e?.message || 'Please use Print / PDF option to save as A4.'}`);
     } finally {
       setIsCapturing(false);
     }
@@ -413,27 +417,20 @@ export const QuotationView: React.FC = () => {
     try {
       await new Promise((resolve) => setTimeout(resolve, 80));
 
-      const canvas = await html2canvas(el, {
-        scale: 2,
-        width: 794,
-        height: 1123,
+      const blob = await toBlob(el, {
+        pixelRatio: 2,
         backgroundColor: '#ffffff',
-        logging: false,
-        useCORS: false,
-        allowTaint: false,
       });
 
-      canvas.toBlob(async (blob) => {
-        if (blob) {
-          try {
-            await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
-            setIsCopied(true);
-            setTimeout(() => setIsCopied(false), 2500);
-          } catch (clipErr) {
-            console.warn('Clipboard write warning:', clipErr);
-          }
+      if (blob) {
+        try {
+          await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+          setIsCopied(true);
+          setTimeout(() => setIsCopied(false), 2500);
+        } catch (clipErr) {
+          console.warn('Clipboard write warning:', clipErr);
         }
-      }, 'image/png');
+      }
     } catch (e) {
       console.warn('Copy capture error:', e);
     } finally {

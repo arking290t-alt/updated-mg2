@@ -44,6 +44,7 @@ import {
   INITIAL_PRESS_NAMES,
   INITIAL_DIE_MAKERS,
   INITIAL_PUNCH_TYPES,
+  INITIAL_PRINT_TYPES,
   formatReceivedTimestamp
 } from '../types/job';
 import {
@@ -69,9 +70,10 @@ import {
 
 interface EmptyDashboardProps {
   onLogout: () => void;
+  currentUserId?: string;
 }
 
-export const EmptyDashboard: React.FC<EmptyDashboardProps> = ({ onLogout }) => {
+export const EmptyDashboard: React.FC<EmptyDashboardProps> = ({ onLogout, currentUserId = 'mga' }) => {
   // Navigation & Drawer State
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [isJobsMenuExpanded, setIsJobsMenuExpanded] = useState(true);
@@ -99,6 +101,7 @@ export const EmptyDashboard: React.FC<EmptyDashboardProps> = ({ onLogout }) => {
   const [stockTypes, setStockTypes] = useState<string[]>(() => getPersistedSettings().stockTypes);
   const [suppliers, setSuppliers] = useState<string[]>(() => getPersistedSettings().suppliers);
   const [presses, setPresses] = useState<string[]>(() => getPersistedSettings().presses);
+  const [printTypes, setPrintTypes] = useState<string[]>(() => getPersistedSettings().printTypes || INITIAL_PRINT_TYPES);
   const [dieMakers, setDieMakers] = useState<string[]>(() => getPersistedSettings().dieMakers || INITIAL_DIE_MAKERS);
   const [punchTypes, setPunchTypes] = useState<string[]>(() => getPersistedSettings().punchTypes || INITIAL_PUNCH_TYPES);
 
@@ -147,6 +150,9 @@ export const EmptyDashboard: React.FC<EmptyDashboardProps> = ({ onLogout }) => {
         setStockTypes(settings.stockTypes);
         setSuppliers(settings.suppliers);
         setPresses(settings.presses);
+        if (settings.printTypes && settings.printTypes.length > 0) {
+          setPrintTypes(settings.printTypes);
+        }
         if (settings.dieMakers && settings.dieMakers.length > 0) {
           setDieMakers(settings.dieMakers);
         }
@@ -303,6 +309,27 @@ export const EmptyDashboard: React.FC<EmptyDashboardProps> = ({ onLogout }) => {
       } catch (e) {
         console.error(e);
       }
+    }
+  };
+
+  // Handler: Add custom Print Type (persists to Firestore)
+  const handleAddNewPrintType = async (newType: string) => {
+    if (!printTypes.includes(newType)) {
+      setPrintTypes((prev) => [...prev, newType]);
+      try {
+        await addCustomOptionToFirestore('printTypes', newType);
+      } catch (e) {
+        console.error(e);
+      }
+    }
+  };
+
+  const handleDeletePrintType = async (typeToDelete: string) => {
+    setPrintTypes((prev) => prev.filter((p) => p !== typeToDelete));
+    try {
+      await deleteCustomOptionFromFirestore('printTypes', typeToDelete);
+    } catch (e) {
+      console.error(e);
     }
   };
 
@@ -807,8 +834,8 @@ export const EmptyDashboard: React.FC<EmptyDashboardProps> = ({ onLogout }) => {
 
             <div className="hidden md:flex items-center gap-2 px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-800 text-xs">
               <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
-              <span className="font-mono text-slate-300">admin</span>
-              <span className="text-slate-500 text-[10px]">· Supervisor</span>
+              <span className="font-mono text-slate-300">{currentUserId}</span>
+              <span className="text-slate-500 text-[10px]">· Office Master</span>
             </div>
 
             <button
@@ -1436,6 +1463,9 @@ export const EmptyDashboard: React.FC<EmptyDashboardProps> = ({ onLogout }) => {
         availablePresses={presses || INITIAL_PRESS_NAMES}
         onAddNewPress={handleAddNewPress}
         onDeletePress={handleDeletePress}
+        availablePrintTypes={printTypes || INITIAL_PRINT_TYPES}
+        onAddNewPrintType={handleAddNewPrintType}
+        onDeletePrintType={handleDeletePrintType}
         targetJob={targetJobForInventory}
         existingInventory={inventory || []}
         availableJobs={jobs || []}

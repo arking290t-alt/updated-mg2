@@ -38,7 +38,7 @@ export default function App() {
       ) : currentUser === 'factory' ? (
         <FactoryFloorDashboard onLogout={handleLogout} />
       ) : (
-        <EmptyDashboard onLogout={handleLogout} />
+        <EmptyDashboard onLogout={handleLogout} currentUserId={currentUser} />
       )}
     </ErrorBoundary>
   );

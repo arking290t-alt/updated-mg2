@@ -15,7 +15,7 @@ import {
   addDaybookPurposeToFirestore,
   deleteDaybookPurposeFromFirestore,
 } from '../firebase/db';
-import html2canvas from 'html2canvas-pro';
+import { toPng, toBlob } from 'html-to-image';
 import {
   BookOpen,
   Wallet,
@@ -882,34 +882,37 @@ export const DaybookView: React.FC = () => {
       `;
 
       document.body.appendChild(ssDiv);
-      const canvas = await html2canvas(ssDiv, {
-        scale: 2,
-        backgroundColor: '#090d16',
-        logging: false,
-        useCORS: true,
-        allowTaint: true,
-        windowWidth: 1024,
-        scrollX: 0,
-        scrollY: 0,
-      });
-      document.body.removeChild(ssDiv);
+      await new Promise((resolve) => setTimeout(resolve, 80));
 
-      const dataUrl = canvas.toDataURL('image/png');
+      const dataUrl = await toPng(ssDiv, {
+        pixelRatio: 2,
+        backgroundColor: '#090d16',
+        cacheBust: true,
+      });
+
       let blob: Blob | null = null;
       try {
-        blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
+        blob = await toBlob(ssDiv, {
+          pixelRatio: 2,
+          backgroundColor: '#090d16',
+        });
       } catch (be) {
         console.warn('Blob generation error:', be);
       }
+      document.body.removeChild(ssDiv);
 
-      // Try automatic download
+      // Trigger automatic direct download
       try {
         const link = document.createElement('a');
         link.download = `daybook-${filterDate}.png`;
         link.href = dataUrl;
         document.body.appendChild(link);
         link.click();
-        document.body.removeChild(link);
+        setTimeout(() => {
+          if (document.body.contains(link)) {
+            document.body.removeChild(link);
+          }
+        }, 200);
       } catch (dlErr) {
         console.warn('Auto download blocked:', dlErr);
       }
@@ -921,7 +924,7 @@ export const DaybookView: React.FC = () => {
         date: filterDate,
       });
     } catch (err: any) {
-      console.error('Screenshot error:', err);
+      console.error('Daybook screenshot error:', err);
       setSsErrorMessage(`Screenshot capture failed: ${err.message || 'Unknown error'}`);
     } finally {
       setIsCapturingSS(false);
@@ -1043,16 +1046,28 @@ export const DaybookView: React.FC = () => {
             </button>
           </div>
 
-          {/* SS Button */}
+          {/* Direct Download PNG Button */}
+          <button
+            type="button"
+            onClick={handleCaptureSS}
+            disabled={isCapturingSS}
+            className="px-3.5 py-1.5 rounded-xl text-xs font-bold bg-amber-500 hover:bg-amber-400 text-slate-950 flex items-center gap-1.5 transition-all shadow-sm cursor-pointer disabled:opacity-50"
+            title="Download Daybook Financial Report as PNG Image"
+          >
+            <Download className="w-3.5 h-3.5 stroke-[2.5]" />
+            <span>{isCapturingSS ? 'Exporting...' : 'Download PNG'}</span>
+          </button>
+
+          {/* SS Preview Button */}
           <button
             type="button"
             onClick={handleCaptureSS}
             disabled={isCapturingSS}
             className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-slate-900 border border-slate-800 text-slate-200 hover:bg-slate-800 hover:text-white flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
-            title="Download Screenshot Image of Daybook (SS)"
+            title="Preview Screenshot Image of Daybook (SS)"
           >
             <Camera className="w-3.5 h-3.5 text-amber-400" />
-            <span>{isCapturingSS ? 'Generating...' : 'SS'}</span>
+            <span>SS</span>
           </button>
 
           {/* Balance Visibility Toggle */}
